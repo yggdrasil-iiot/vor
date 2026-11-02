@@ -20,6 +20,7 @@ gate = ["asyncua>=1.1"]
 
 [project.scripts]
 vor = "vor.server:main"
+vor-propose = "vor.propose:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

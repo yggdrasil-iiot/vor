@@ -97,6 +97,37 @@ java -jar muninn.jar host <mqttUrl> rebirth <group> <edge>
 
 Verified live: started after the birth, Vor answered no-sample; after one rebirth request it answered usable with a sample about 1.3 s old.
 
+## Proposing a command
+
+`vor-propose` is a separate command-line tool installed with the package (entry point `vor-propose`, also `python -m vor.propose`). It is the agent's half of the governed write path (M2). The MCP server stays read-only and holds no key; signing is a separate process so that a prompt steering a tool call cannot obtain a signature.
+
+It takes one `read_governed` answer file, as Vor returned it, and writes one command proposal: a DSSE envelope around an in-toto Statement v1 with predicate type `https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v1`, naming one OPC UA Method call with one Double input, signed with the agent's Ed25519 key. Three subjects pin, by raw-byte SHA-256, the stream head file `heads/<stream>.json`, the `release.json` it names, and the evidence. The evidence travels base64 in the predicate, byte for byte, never re-serialized.
+
+```sh
+vor-propose <answer.json> --registry <dir> --by <principal> --by-key <file> --approved-by <principal> --group <g> --edge <e> --device <d> --object <nodeId> --method <nodeId> --input <name> --value <v> [--not-before <instant>] [--valid-for <seconds>] [--out-dir proposals]
+```
+
+`--registry` is the Bifrost registry Vor reads (the directory holding `mappings/`). `--by-key` is a key file as Bifrost writes one (base64 PKCS#8 on one line). Node ids are `nsu=<namespaceUri>;s=<identifier>`. `--not-before` defaults to now; `--valid-for` defaults to 900 seconds and may not exceed 900.
+
+Output is `<out-dir>/<cmdId>.dsse.json` (never overwritten) and a JSON report `{"kind": "proposal", "cmdId", "out", "notBefore", "notAfter"}`; exit 0.
+
+It refuses instead of signing (exit 1, JSON `proposal-refusal` with `error`) with these codes:
+- `evidence-malformed`
+- `evidence-unusable` (the answer is a refusal)
+- `binding-mismatch` (the answer reads another group or edge than the target)
+- `head-mismatch` (the registry's current head or its `release.json` is not the release the answer pinned)
+- `same-principal`
+- `node-id`
+- `input` (not a finite number)
+- `window` (`notBefore` not before `notAfter`, or more than 15 minutes)
+- `target`
+- `key`
+- `out-exists`
+
+Exit 2 is usage.
+
+The proposal then goes to the approver: `gates command approve` in Bifrost co-signs the same bytes, and Heimdall re-checks everything before calling the Method.
+
 ## Tests and fixtures
 
 Run tests:
@@ -149,6 +180,13 @@ The run passes (exit 0) only when all 9 assertions ran and held. A missing jar, 
 
 CI (`.github/workflows/ci.yml`) runs the unit tests on Linux (Python 3.11 and 3.13) and Windows (Python 3.13) and the ASCII product-name check; it does not run the gate, so a red badge means a regression rather than a container that did not come up.
 
+`scripts/propose_crosscheck.py` checks the contract across languages: over a copy of the fixture registry with two fresh keys (`agent`, `operator`) and their command grants, `vor-propose` signs a proposal from a real Vor answer; Bifrost's `gates command verify` accepts it; `gates command approve` co-signs it under a command policy; the approved envelope carries the agent's payload string and signature unchanged; `gates command verify --approved` accepts it; and a copy whose input value was changed after signing is refused `command.signature`. It needs `<bifrost>/gates/target/bifrost-gates.jar` and Java 17+. The run passes (exit 0) only when all 7 assertions ran and held. `--negative-control` expects the tampered copy to be accepted, so it must exit 1. CI does not run it, like the other gate.
+
+```sh
+python scripts/propose_crosscheck.py
+python scripts/propose_crosscheck.py --negative-control
+```
+
 ## Design
 
-The design specification is located at docs/superpowers/specs/2026-11-01-vor-m1-governed-read-design.md.
+The design specification is located at docs/superpowers/specs/2026-11-01-vor-m1-governed-read-design.md. The M2 design specification is at `docs/superpowers/specs/2026-11-02-vor-m2-governed-write-design.md`.
