@@ -41,3 +41,13 @@ def test_unknown_fields_are_skipped():
 def test_truncated_input_is_an_error():
     with pytest.raises(sparkplug.DecodeError):
         sparkplug.decode(payload(1, metric("Temp"))[:-3])
+
+
+@pytest.mark.parametrize("body", [
+    _field(1, 2, b"\xff\xfe"),                                         # metric name is not UTF-8
+    _field(1, 2, b"T") + _field(9, 2, _field(1, 2, b"\xc3")),          # property key is not UTF-8
+    _field(1, 2, b"T") + _field(4, 0, 12) + _field(12, 5, b"\x00\x00"),  # float with a short fixed32 slot
+], ids=["metric-name", "property-key", "short-float"])
+def test_malformed_fields_are_decode_errors(body):
+    with pytest.raises(sparkplug.DecodeError):
+        sparkplug.decode(payload(1, body))

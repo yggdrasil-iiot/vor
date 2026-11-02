@@ -103,10 +103,14 @@ class Meaning:
 
 
 def lifecycle(mappings: Path, trusted: TrustedKeys, floors: FloorStore, now_ms: int, semantic_id: str) -> Meaning:
-    """The meaning's state replayed from the semantic-lifecycle events of every verified stream head."""
+    """The meaning's state replayed from the semantic-lifecycle events of every verified stream head.
+
+    A stream whose head was accepted before stays in the set even if its head files disappear: the missing head then
+    fails verification, so deleting a head cannot hide a lifecycle event (a retirement) it carried."""
     events: dict[str, tuple[dict, dict]] = {}
-    for head_file in sorted((mappings / "heads").glob("*.json")):
-        head = verify_head(mappings, head_file.stem, trusted, floors, now_ms)
+    streams = {f.stem for f in (mappings / "heads").glob("*.json")} | floors.streams()
+    for stream in sorted(streams):
+        head = verify_head(mappings, stream, trusted, floors, now_ms)
         release = verify_release(mappings, head)
         for path, doc in release.of_kind("semantic-lifecycle"):
             if doc.get("semanticId") != semantic_id:

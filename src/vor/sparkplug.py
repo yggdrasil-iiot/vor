@@ -184,12 +184,18 @@ def _metric(buf: bytes) -> Metric:
 
 
 def decode(buf: bytes) -> Payload:
+    """Any malformed input (bad UTF-8, a short fixed field, an unknown type) is a DecodeError, never another error."""
     p = Payload()
-    for number, wire, v in _fields(buf):
-        if number == 1 and wire == 0:
-            p.timestamp = v
-        elif number == 2 and wire == 2:
-            p.metrics.append(_metric(v))
-        elif number == 3 and wire == 0:
-            p.seq = v
+    try:
+        for number, wire, v in _fields(buf):
+            if number == 1 and wire == 0:
+                p.timestamp = v
+            elif number == 2 and wire == 2:
+                p.metrics.append(_metric(v))
+            elif number == 3 and wire == 0:
+                p.seq = v
+    except DecodeError:
+        raise
+    except (ValueError, struct.error, KeyError, TypeError, IndexError) as e:
+        raise DecodeError(f"{type(e).__name__}: {e}") from e
     return p

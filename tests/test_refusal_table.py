@@ -222,6 +222,16 @@ def test_lifecycle_head_that_fails_refuses(tmp_path):
     assert reason(out) == "head-unverified" and out["verdict"]["evidence"]["stream"] == "semantics"
 
 
+def test_deleting_a_lifecycle_head_after_it_was_seen_cannot_hide_the_retirement(tmp_path):
+    w = World(tmp_path, "retired")
+    feed(w.cache, w.now)
+    assert reason(w.read()) == "meaning-retired"
+    (w.mappings / "heads" / "semantics.json").unlink()
+    (w.mappings / "head-attestations" / "semantics.dsse.json").unlink()
+    out = w.read()
+    assert reason(out) == "head-unverified" and out["verdict"]["evidence"]["stream"] == "semantics"
+
+
 def test_unit_unknown(world):
     unknown = {"status": "unknown"}
     edit_json(world.payload / "semantics" / "0.json", lambda d: d["members"][0].__setitem__("unit", unknown))

@@ -81,6 +81,10 @@ class FloorStore:
         d = json.loads(f.read_text(encoding="utf-8"))
         return int(d["headVersion"]), d["statementSha256"]
 
+    def streams(self) -> set[str]:
+        """Every stream that has ever had a head accepted here."""
+        return {f.stem for f in (self.directory / "floors").glob("*.json")}
+
     def raise_to(self, stream: str, version: int, statement_sha: str) -> None:
         f = self._file(stream)
         f.parent.mkdir(parents=True, exist_ok=True)
