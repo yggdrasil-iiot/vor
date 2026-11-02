@@ -1,0 +1,8 @@
+services:
+  hivemq-ce:
+    image: hivemq/hivemq-ce:latest
+    container_name: vor-hivemq-ce
+    ports:
+      - "1883:1883"
+    environment:
+      HIVEMQ_ALLOW_ALL_CLIENTS: "true"   # HiveMQ CE 2026.x is secure-by-default; without this it refuses ALL MQTT clients

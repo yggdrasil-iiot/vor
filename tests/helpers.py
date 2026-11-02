@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_private_key
 
 from vor.head import IN_TOTO, PREDICATE, STATEMENT, instant, pae
 
@@ -52,6 +52,14 @@ def fixture_now(mappings: Path, stream: str = "line1") -> int:
 class Keys:
     def __init__(self, *principals: str):
         self.private = {p: Ed25519PrivateKey.generate() for p in principals}
+
+    @classmethod
+    def from_bifrost(cls, directory: Path, *principals: str) -> "Keys":
+        """The keys `gates identity keygen` wrote: <principal>.key holds a base64 PKCS#8 DER Ed25519 private key."""
+        keys = cls()
+        keys.private = {p: load_der_private_key(base64.b64decode((directory / f"{p}.key").read_text().strip()), None)
+                        for p in principals}
+        return keys
 
     def trusted(self, path: Path, alias: dict[str, str] | None = None) -> Path:
         """Write a trusted-keys file; `alias` registers a principal under another principal's key."""
