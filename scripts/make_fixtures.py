@@ -93,49 +93,59 @@ def lifecycle_bundle(dest: Path, semantics: Path, signature_sha: str, actions: l
                                                 "connections": []}})
 
 
+class Publisher:
+    """Fresh proposer/approver keys and Bifrost's CLI: publishes the vor-read release on stream ``line1`` and
+    lifecycle-only releases on stream ``semantics`` into a registry. The private keys stay in ``keys``."""
+
+    def __init__(self, gates: Gates, source: Path, work: Path):
+        self.gates, self.source, self.work = gates, source, work
+        self.keys = work / "keys"
+        lines = []
+        for principal in ("proposer", "approver"):
+            gates("identity", "keygen", principal, "--out", str(self.keys))
+            pub = (self.keys / f"{principal}.pub").read_text().strip()
+            lines.append(json.dumps({"principal": principal, "publicKey": pub}))
+        self.authorized = "\n".join(lines) + "\n"
+        self.signers = ["--by", "proposer", "--by-key", str(self.keys / "proposer.key"),
+                        "--approved-by", "approver", "--approved-by-key", str(self.keys / "approver.key")]
+
+    def registry(self, r: Path) -> Path:
+        (r / "identity").mkdir(parents=True)
+        (r / "identity" / "authorized-keys.jsonl").write_text(self.authorized)
+        dump(r / "identity" / "activation-policy.json", policy(["line1", "semantics"]))
+        bundle = self.work / f"{r.name}-vor-read"
+        shutil.copytree(self.source, bundle)
+        self.gates("mapping", "approve", str(r), str(bundle), "approval-vor-read", *self.signers)
+        self.gates("mapping", "publish", str(r), str(bundle), "vor-read", "1.0.0", "--approval", "approval-vor-read",
+                   *self.signers)
+        return r
+
+    def add_lifecycle(self, r: Path, actions: list[str]) -> None:
+        catalog = self.gates("mapping", "lifecycle", str(r))
+        entry = next(e for e in catalog["entries"] if e["semanticId"] == SEMANTIC_ID)
+        bundle = self.work / f"{r.name}-semantics"
+        lifecycle_bundle(bundle, self.source / "semantics" / "0.json", sha(compact(entry["signature"])), actions)
+        self.gates("mapping", "approve", str(r), str(bundle), "approval-semantics", *self.signers)
+        self.gates("mapping", "publish", str(r), str(bundle), "semantics", "1.0.0", "--approval",
+                   "approval-semantics", *self.signers)
+
+
+def vor_read_source(bifrost: Path) -> Path:
+    return bifrost / "core" / "src" / "test" / "resources" / "mapping-fixtures" / "vor-read"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bifrost", type=Path, default=ROOT.parent / "bifrost")
     a = ap.parse_args()
     gates = Gates(a.bifrost / "gates" / "target" / "bifrost-gates.jar")
-    source = a.bifrost / "core" / "src" / "test" / "resources" / "mapping-fixtures" / "vor-read"
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        keys = tmp / "keys"
-        lines = []
-        for principal in ("proposer", "approver"):
-            gates("identity", "keygen", principal, "--out", str(keys))
-            pub = (keys / f"{principal}.pub").read_text().strip()
-            lines.append(json.dumps({"principal": principal, "publicKey": pub}))
-        authorized = "\n".join(lines) + "\n"
-        signers = ["--by", "proposer", "--by-key", str(keys / "proposer.key"),
-                   "--approved-by", "approver", "--approved-by-key", str(keys / "approver.key")]
-
-        def registry(name: str) -> Path:
-            r = tmp / name
-            (r / "identity").mkdir(parents=True)
-            (r / "identity" / "authorized-keys.jsonl").write_text(authorized)
-            dump(r / "identity" / "activation-policy.json", policy(["line1", "semantics"]))
-            bundle = tmp / f"{name}-vor-read"
-            shutil.copytree(source, bundle)
-            gates("mapping", "approve", str(r), str(bundle), "approval-vor-read", *signers)
-            gates("mapping", "publish", str(r), str(bundle), "vor-read", "1.0.0", "--approval", "approval-vor-read",
-                  *signers)
-            return r
-
-        def add_lifecycle(r: Path, actions: list[str]) -> None:
-            catalog = gates("mapping", "lifecycle", str(r))
-            entry = next(e for e in catalog["entries"] if e["semanticId"] == SEMANTIC_ID)
-            bundle = tmp / f"{r.name}-semantics"
-            lifecycle_bundle(bundle, source / "semantics" / "0.json", sha(compact(entry["signature"])), actions)
-            gates("mapping", "approve", str(r), str(bundle), "approval-semantics", *signers)
-            gates("mapping", "publish", str(r), str(bundle), "semantics", "1.0.0", "--approval", "approval-semantics",
-                  *signers)
-
-        built = {"active": registry("active"), "deprecated": registry("deprecated"), "retired": registry("retired")}
-        add_lifecycle(built["deprecated"], ["deprecate"])
-        add_lifecycle(built["retired"], ["deprecate", "retire"])
+        pub = Publisher(gates, vor_read_source(a.bifrost), tmp)
+        built = {name: pub.registry(tmp / name) for name in ("active", "deprecated", "retired")}
+        pub.add_lifecycle(built["deprecated"], ["deprecate"])
+        pub.add_lifecycle(built["retired"], ["deprecate", "retire"])
 
         target = OUT / "registries"
         if target.exists():
@@ -143,7 +153,7 @@ def main() -> None:
         target.mkdir(parents=True)
         for name, r in built.items():
             shutil.copytree(r, target / name, ignore=shutil.ignore_patterns(".lock"))
-        (OUT / "trusted-keys.jsonl").write_text(authorized)
+        (OUT / "trusted-keys.jsonl").write_text(pub.authorized)
     print(f"wrote {target} and {OUT / 'trusted-keys.jsonl'}")
 
 

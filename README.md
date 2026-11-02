@@ -114,6 +114,41 @@ python scripts/make_fixtures.py [--bifrost ../bifrost]
 
 This requires <bifrost>/gates/target/bifrost-gates.jar. It writes tests/fixtures/registries/{active,deprecated,retired} and tests/fixtures/trusted-keys.jsonl; private keys are created in a temporary directory and deleted. tests/fixtures is marked -text in .gitattributes so line endings never change hash-pinned bytes.
 
+## Gates
+
+`scripts/vor_gate.py` runs gate (i) refusal and gate (ii) side-by-side against live components with no mocks:
+- HiveMQ CE started with docker compose (`docker-compose.yml` in the repo, container `vor-hivemq-ce`, port 1883)
+- Bifrost OPC UA sim
+- Mapping registry published at gate time with Bifrost's own CLI and fresh keys
+- Muninn `feed --session 1000 --hierarchy`
+- Vor over MCP stdio driven by a real MCP client
+- Plain OPC UA client reading the sim directly and writing its status-control node (`ns=2;s=Sim/Line1/Mixer1.Temp.StatusCode`)
+
+Requirements:
+- Docker
+- Java 17+
+- Built jars: `<bifrost>/gates/target/bifrost-gates.jar`, `<bifrost>/sim/target/bifrost-sim.jar`, and `<muninn>/target/muninn.jar` (sibling checkouts by default, override with `--bifrost` and `--muninn`)
+- Gate extra: `pip install -e ".[gate]"` (`asyncua`)
+
+```sh
+python scripts/vor_gate.py
+python scripts/vor_gate.py --negative-control
+```
+
+Vor starts after Muninn's birth, so the gate first requests a rebirth (Vor never does) and waits for a usable answer.
+
+Gate execution order:
+- Gate (ii): under Good status the direct OPC UA value equals Vor's sample value and Vor's answer carries the pin, the UCUM unit, and the policy. With a Bad StatusCode written, the direct read still returns the raw value while Vor refuses with bad-quality and no sample value.
+- Gate (i): baseline usable, Bad status gives bad-quality, Good status again gives usable, an expired head gives head-expired, and a published retirement gives meaning-retired. Each step must also differ from the step before.
+
+The expired head is signed during the run by the gate with the registry's own synthetic keys, because Bifrost's CLI refuses a head lifetime under one day; Vor has no clock or check override. The retirement is a lifecycle-only release published with Bifrost's CLI.
+
+The run passes (exit 0) only when all 9 assertions ran and held. A missing jar, a busy port 48400, a broker that does not start, or a timeout fails it (exit 1).
+
+`--negative-control` expects a usable answer under Bad quality, so it must exit 1: that run shows the assertions can fail. All started processes and the broker are stopped at the end, pass or fail.
+
+CI (`.github/workflows/ci.yml`) runs the unit tests on Linux (Python 3.11 and 3.13) and Windows (Python 3.13) and the ASCII product-name check; it does not run the gate, so a red badge means a regression rather than a container that did not come up.
+
 ## Design
 
 The design specification is located at docs/superpowers/specs/2026-11-01-vor-m1-governed-read-design.md.
