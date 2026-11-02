@@ -1,0 +1,17 @@
+{
+  "kind": "evidence-artifact",
+  "schemaVersion": "1.0.0",
+  "id": "manual-mixer1-temp",
+  "version": "1.0.0",
+  "origin": "synthetic",
+  "file": {
+    "path": "data/manual-0.txt",
+    "sha256": "acfae7762c0905737d44da4d17b1254f88296b2f0fdcdac2509739358cb8a059",
+    "mediaType": "text/plain"
+  },
+  "capturedAt": "2026-11-01T00:00:00Z",
+  "product": null,
+  "scope": [
+    "mixer1"
+  ]
+}

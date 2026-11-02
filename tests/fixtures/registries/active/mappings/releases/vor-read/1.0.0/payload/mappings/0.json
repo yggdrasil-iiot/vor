@@ -1,0 +1,60 @@
+{
+  "kind": "mapping-set",
+  "schemaVersion": "2.12.0",
+  "id": "mixer1-mapping",
+  "version": "1.0.0",
+  "equipmentInstanceId": "mixer1",
+  "targetInstanceRef": {
+    "id": "mixer1",
+    "version": "1.0.0"
+  },
+  "mappings": [
+    {
+      "mappingId": "temp",
+      "valueRef": {
+        "kind": "source",
+        "sourceRef": {
+          "id": "mixer1-temp",
+          "version": "1.0.0"
+        }
+      },
+      "memberPath": [
+        {
+          "kind": "member",
+          "memberId": "temp"
+        }
+      ],
+      "transform": [
+        {
+          "op": "cast",
+          "to": "Double",
+          "rounding": "exact",
+          "overflow": "error"
+        }
+      ],
+      "outputUnit": {
+        "status": "known",
+        "code": "Cel"
+      },
+      "invalidValuePolicy": "bad-quality",
+      "evidenceRefs": [
+        {
+          "artifactId": "manual-mixer1-temp",
+          "locator": {
+            "kind": "text-line",
+            "line": 1
+          }
+        }
+      ],
+      "temporalPolicy": {
+        "timestampBasis": "source",
+        "maxAgeMs": 5000,
+        "maxSkewMs": 0,
+        "uncertainInput": "reject",
+        "missingInput": "reject",
+        "badInput": "propagate",
+        "assembly": "latest"
+      }
+    }
+  ]
+}

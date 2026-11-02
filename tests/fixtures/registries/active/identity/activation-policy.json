@@ -1,0 +1,38 @@
+{
+  "version": "1.0.0",
+  "default": "deny",
+  "rules": [
+    {
+      "id": "publish-line1",
+      "principal": "proposer",
+      "action": "publish",
+      "target": "mapping-publication",
+      "kind": "mapping-release",
+      "ref": "line1"
+    },
+    {
+      "id": "approve-line1",
+      "principal": "approver",
+      "action": "approve",
+      "target": "mapping-publication",
+      "kind": "mapping-release",
+      "ref": "line1"
+    },
+    {
+      "id": "publish-semantics",
+      "principal": "proposer",
+      "action": "publish",
+      "target": "mapping-publication",
+      "kind": "mapping-release",
+      "ref": "semantics"
+    },
+    {
+      "id": "approve-semantics",
+      "principal": "approver",
+      "action": "approve",
+      "target": "mapping-publication",
+      "kind": "mapping-release",
+      "ref": "semantics"
+    }
+  ]
+}

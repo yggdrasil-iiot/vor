@@ -1,0 +1,1 @@
+Mixer1 temperature: nsu=urn:bifrost:opcua:sim;s=Line1/Mixer1.Temp, Double, Cel
