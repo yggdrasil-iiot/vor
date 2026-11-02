@@ -144,7 +144,7 @@ The decoded in-toto Statement schema contains:
 - `subject`: Array of cryptographic resource bindings:
   1. Digest of the active model head: `heads/<stream>.json` (name = stream path, `digest.sha256`).
   2. Digest of the active release artifact: `release.json` (name = release path, `digest.sha256`).
-  3. Digest of the embedded evidence payload (name = `evidence`, `digest.sha256`).
+  3. Digest of the decoded evidence bytes (name = `evidence`, `digest.sha256`).
 - `predicateType`: String set to `https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v1`.
 - `predicate`: The structured operational command payload:
   - `cmdId`: RFC 4122 UUID string, matching the outer NCMD message UUID.
@@ -165,8 +165,7 @@ The decoded in-toto Statement schema contains:
     - `notAfter`: Expiration timestamp. The duration between `notBefore` and `notAfter` must not exceed 900 seconds (15 minutes).
   - `proposedBy`: Principal string of the initiating AI agent.
   - `approvedBy`: Principal string of the human operator authorized to co-sign.
-  - `evidence`: Complete, unaltered JSON object returned by Vor's M1 `read_governed` call, including its release pin, semantic verdict, quality, and timestamps.
-  - `evidenceSha256`: Hexadecimal SHA-256 digest of the raw evidence payload bytes.
+  - `evidence`: An object `{mediaType: "application/json", base64}` whose decoded bytes are the JSON answer of Vor's M1 `read_governed` call, carried byte for byte (not re-serialized). There is no separate `evidenceSha256` predicate field; the subject carries the digest. Heimdall uses `answer.pin.file` and `answer.pin.field_id` for the precondition to find, in the pinned release, the mapping whose `temporalPolicy.maxAgeMs` bounds freshness and whose source definition names the OPC UA node to read before the call.
 
 Namespace indexes are dynamically resolved per OPC UA session using the namespace URI; the statement carries expanded NodeIds (namespace URI plus identifier), never a namespace index.
 
@@ -213,7 +212,7 @@ The synthetic target Method is defined on the simulation model:
 
 Server-side Method behavior:
 - The Method invocation handler in `EmbeddedMiloSim` validates argument count, argument data type, array dimensions (scalar only), numerical finiteness (rejecting NaN and infinity), and engineering boundaries.
-- If the input argument is less than 0.0 or greater than 100.0, the handler terminates execution and returns the OPC UA StatusCode `Bad_OutOfRange`.
+- The sim's SetTemperature handler, for an input outside 0.0..100.0, fails the call with StatusCode `Bad_InvalidArgument` and sets that input argument's own result to `Bad_OutOfRange`. Missing arguments and wrong types are rejected by the Milo server before the handler (`Bad_ArgumentsMissing`; `Bad_InvalidArgument` with `Bad_TypeMismatch` for the argument).
 - On success, the handler updates the internal state backing `Line1/Mixer1.Temp`, returns StatusCode `Good`, and returns the applied value in the output argument array.
 - Heimdall's execution engine (`Applier`) implements a dedicated `method` branch utilizing Eclipse Milo 1.1.8's `CallMethodRequest`. The execution is classified as successful only if the overall call StatusCode is `Good` and every input argument result StatusCode in the returned `CallMethodResult` is `Good`.
 - `write`, `call`, and `method` execution branches remain strictly separated in code. Unrecognized operation types are rejected. Legacy `CommandPolicy` configurations never permit Method execution unless a rule explicitly specifies the target Method identifier.
@@ -239,72 +238,96 @@ When an NCMD message arrives at Heimdall's ingress bridge (`NcmdOpcUaBridge.mess
                        |
                        v
          (1) Decode & Metric Check
+             - Exactly 1 metric `bifrost/command/v1`, `op` = `method`
+             - Datatype String; topic and `target` match edge
+             - Refusal reason: `command.malformed`
                        | (pass)
                        v
-         (2) Verify DSSE Signatures
-             - Exactly 2 valid signatures
-             - Distinct keys (Four-Eyes)
-             - Signers match proposedBy & approvedBy
+         (2) Ledger Configuration Check
+             - Verify `CommandLedger` is configured for edge
+             - Enforces unrecorded commands cannot execute
+             - Refusal reason: `command.ledger.required`
                        | (pass)
                        v
-         (3) Validity Window Check
-             - notBefore <= now < notAfter
-             - (notAfter - notBefore) <= 15 minutes
+         (3) Verify DSSE Signatures
+             - Exactly 2 signatures over identical PAE bytes
+             - Distinct keys in `identity/authorized-keys.jsonl`
+             - Signers match `proposedBy` and `approvedBy`
                        | (pass)
                        v
-         (4) Model-Head Binding Check
-             - Subject digests match active heads/<stream>.json & release.json
-             - Embedded evidence verdict == usable
+         (4) Validity Window Check
+             - Evaluate `notBefore <= now < notAfter` on local clock
+             - Validate window span is at most 900 seconds
+             - Refusal reason: `command.window`
                        | (pass)
                        v
-         (5) Replay Check
-             - Ledger scan for cmdId across active window
+         (5) Model-Head Binding Check
+             - Subject digests match `heads/<stream>.json` and release
+             - Evidence pin names release (`command.head.mismatch`)
+             - Evidence verdict is `usable` (`command.evidence.unusable`)
                        | (pass)
                        v
-         (6) Dual Policy Authorization
-             - CommandAuthorizer (bounds & method check)
-             - OPA (Wasm evaluation)
+         (6) Precondition Resolution
+             - Pinned `answer.pin.file` matches hash in `release.json`
+             - Mapping resolves `temporalPolicy.maxAgeMs` and source
+             - Source node must start with `objectNodeId` + "."
                        | (pass)
                        v
-         (7) Live Operational Precondition
-             - Read Line1/Mixer1.Temp over internal OPC UA session
-             - StatusCode == Good
-             - Source timestamp age <= maxAgeMs (5000ms)
+         (7) Replay Check
+             - Scan ledger daily segments from `notBefore` day to now
+             - Confirm no existing intent entry with `reserved` outcome
+             - Reject replay (`command.replay`) or ledger read failure
                        | (pass)
                        v
-         (8) Durable Ledger Reservation
-             - Append intent entry to CommandLedger
-             - Force fsync to disk
+         (8) Dual Policy Authorization
+             - `CommandAuthorizer` evaluates edge `CommandPolicy`
+             - Compiled `command_method.rego` Wasm policy evaluates input
+             - Input: principals, stream grants, window, method, target
                        | (pass)
                        v
-         (9) Method Execution & Egress
-             - Milo CallMethodRequest to Line1/Mixer1.SetTemperature
-             - Validate call status & argument status == Good
-             - Append outcome to CommandLedger
-             - Publish result to NDATA response topic
+         (9) Live Precondition Check
+             - Read precondition node over Heimdall OPC UA session
+             - Require StatusCode `Good`
+             - Source timestamp not in future nor older than `maxAgeMs`
+                       | (pass)
+                       v
+         (10) Durable Reservation
+             - Append intent entry with outcome `reserved` to ledger
+             - Fsync via `FileChannel.force` before call execution
+             - Repeat replay check under ledger lock to prevent race
+                       | (pass)
+                       v
+         (11) Method Invocation
+             - `CallMethodRequest` to `methodNodeId` on `objectNodeId`
+             - Applied only if call StatusCode and arguments are `Good`
+             - Record outcome: `applied`, `method-failed`, or `unknown`
 ```
 
 1. Transport decoding:
-   The bridge extracts the payload. It verifies that the message contains exactly one metric named `bifrost/command/v1`, that the metric property `op` equals `method`, and that the incoming Sparkplug B topic (`group` and `edge`) matches the `target` structure declared in the statement.
-2. DSSE verification:
-   The daemon decodes the envelope and verifies that the payload contains exactly two cryptographic signatures computed over identical PAE bytes. It resolves both keys through `identity/authorized-keys.jsonl` and confirms they represent distinct identities. It verifies that one signer resolves to `proposedBy` and the other to `approvedBy`; signature order is not significant.
-3. Validity window evaluation:
-   Heimdall samples its local clock (`now`) and verifies that `notBefore <= now < notAfter`. It confirms that the total window span (`notAfter - notBefore`) is less than or equal to 900 seconds (15 minutes).
-4. Model-head binding validation:
-   The daemon computes the SHA-256 digests of the active model head file (`heads/<stream>.json`) and the active release file (`release.json`) in its local registry. It verifies that these match the corresponding subject digests in the statement. A release publication event that occurred after proposal creation changes the local digests and invalidates the proposal. It confirms that the embedded M1 evidence payload has a verdict of `usable`.
-5. Replay reservation check:
-   Heimdall queries `CommandLedger` across the ledger segments covering the proposal's validity window. If a reservation (an intent entry written at step 8, whatever its recorded outcome) with the identical `cmdId` is present, the command is rejected as a duplicate replay. Refusal entries recorded for audit at steps 1 to 7 do not reserve the `cmdId`.
-6. Policy authorization:
-   The command is submitted to `CommandAuthorizer`. The authorizer checks that the target method is explicitly permitted by `CommandPolicy` and that the input argument satisfies all static `Constraint` bounds. Upon approval, Heimdall invokes its Method OPA adapter, evaluating the compiled `command_method.rego` WebAssembly policy. The policy receives a structured input object: both principals, their verified `ActivationAction` grants, the distinct-keys boolean flag, window bounds, current time, the head-match boolean flag, the evidence status, target identifiers, method name, and input arguments. The policy must evaluate to allow.
-7. Live precondition evaluation:
-   Immediately prior to invoking the Method, Heimdall reads `Line1/Mixer1.Temp` over its authenticated OPC UA client session. It verifies that the returned StatusCode is `Good` and that the difference between the local clock and the sample's source timestamp does not exceed `maxAgeMs` (5000 milliseconds).
-8. Durable replay reservation:
-   Heimdall formats an intent record containing `cmdId`, the proposal digest, and timestamps, appends it to `CommandLedger`, and issues an explicit `fsync` call to the underlying file descriptor.
-9. Method invocation:
-   Heimdall dispatches a `CallMethodRequest` to the Milo client targeting `Line1/Mixer1.SetTemperature` with the argument `targetTemperature`. It awaits the `CallMethodResult`, confirms that the call StatusCode is `Good` and that the parameter result StatusCode is `Good`, records an outcome entry in `CommandLedger`, and publishes a completion message containing the output values to the NDATA topic.
+   Heimdall verifies that the message arrives on this edge's NCMD topic and contains exactly one metric named `bifrost/command/v1` with datatype String and property `op` equal to `method`. It verifies that the statement's `target.group` and `target.edge` equal this edge's group and edge. Otherwise, it refuses with `command.malformed`.
+2. Ledger configured:
+   Heimdall confirms that `CommandLedger` is configured for the edge. This check occurs before signature verification because nothing on this path may run unrecorded. Otherwise, it refuses with `command.ledger.required`.
+3. DSSE verification:
+   Heimdall verifies that the envelope payload contains exactly two cryptographic signatures computed over identical PAE bytes. It resolves both keys through `identity/authorized-keys.jsonl` and confirms they represent distinct identities, refusing with `identity.four-eyes.same-key` if the keys match. It confirms that one signer resolves to `proposedBy` and the other to `approvedBy`; signature order is not significant. A signature verification failure refuses with `command.signature`, whereas a co-signature that verifies for another registered principal refuses with `command.approver.mismatch`.
+4. Validity window:
+   Heimdall checks the local clock and confirms that `notBefore <= now < notAfter`, with a total span of at most 900 seconds. Otherwise, it refuses with `command.window`.
+5. Model-head binding:
+   Heimdall confirms that the subject digests equal the SHA-256 of the registry's current `heads/<stream>.json` and the `release.json` it names, and that the evidence pin names that release. If not, it refuses with `command.head.mismatch`. It also verifies that the evidence verdict is `usable`, refusing with `command.evidence.unusable` otherwise.
+6. Precondition resolution from the pinned release:
+   Heimdall verifies that `answer.pin.file` is a file of the pinned release whose bytes match the SHA-256 recorded in `release.json`. Within this file, it resolves the mapping whose `mappingId` equals `answer.pin.field_id` to obtain `temporalPolicy.maxAgeMs` (5000 for the fixture) and its source. It verifies that the source definition's OPC UA node (for the fixture `nsu=urn:bifrost:opcua:sim;s=Line1/Mixer1.Temp`) is a member of the called object by checking that it starts with `objectNodeId` followed by a dot. Otherwise, it refuses with `command.precondition`.
+7. Replay check:
+   Heimdall scans the ledger's daily segments from the day of `notBefore` through today for an intent entry with outcome `reserved` and the same `cmdId`. If a match is found, it refuses with `command.replay`. Entries with outcome `denied` do not reserve. If a segment cannot be read, it refuses with `command.ledger.required`.
+8. Dual policy:
+   Heimdall evaluates `CommandAuthorizer` over the edge's `CommandPolicy`; failure refuses with `command.policy.denied`. It then evaluates the compiled `command_method.rego` WebAssembly policy; failure refuses with `command.opa.denied`. The OPA input carries both principals with the command grants each holds on the stream, read from the edge's registry activation policy, the window and current time, the target, the method, and the input.
+9. Live precondition:
+   Heimdall reads the precondition node over its own OPC UA session. It verifies that the read returns StatusCode `Good` and a source timestamp neither in the future nor older than `maxAgeMs`. Otherwise, it refuses with `command.precondition`.
+10. Durable reservation:
+   Heimdall appends an intent entry with outcome `reserved` (fields `group`, `edge`, `cmdId`, `subject` = `proposedBy`, `command` = `methodNodeId`, `value`, `type`, and the timestamp `at`) to `CommandLedger` and forces it to disk (`FileChannel.force`, i.e. fsync) before the call. The replay check is repeated under the ledger's lock so two deliveries cannot both reserve. An already-reserved command returns `command.replay`; a ledger I/O failure returns `command.ledger.required`.
+11. Method invocation:
+   Heimdall issues a `CallMethodRequest` to `methodNodeId` on `objectNodeId` with the one input. The invocation is applied only when the call StatusCode and every input argument result are `Good`. An outcome entry follows: `applied`, `method-failed`, or `unknown` when the call threw. For NDATA, on success the first output argument is returned as value; on failure the detail begins `failed: command.method.failed (<outcome>)`.
 
 Execution configuration invariants:
-- Rejections occurring during steps 1 through 7 abort processing before any reservation and plant interaction; each refusal is recorded in `CommandLedger` as an audit entry with outcome `denied`, as the bridge records refusals today.
+- Refusals occurring during steps 1 through 9 abort processing before any reservation and plant interaction and are recorded in `CommandLedger` as audit entries with outcome `denied`, which do not consume the `cmdId`; a refusal at step 2 has no ledger to record into, and an audit append that fails is logged by the bridge instead.
 - The configuration setting `ENFORCEMENT_LOG_ONLY` is ignored for `op=method`. A policy failure on the Method path always halts execution.
 - The configuration setting `REQUIRE_SIGNED_COMMAND` does not apply to `op=method`, as dual cryptographic signatures are unconditionally required.
 
@@ -319,17 +342,17 @@ Execution configuration invariants:
 | System time outside `[notBefore, notAfter)` or span > 15 minutes | `command.window` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
 | Head digest or release digest does not match current registry | `command.head.mismatch` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
 | Embedded M1 evidence verdict is not `usable` | `command.evidence.unusable` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| `cmdId` already recorded in `CommandLedger` | `command.replay` | Refusal published to NDATA; audit entry `denied`; no method invocation. |
-| `CommandLedger` is uninitialized, missing, or fails to `fsync` | `command.ledger.required` | Refusal published to NDATA; `cmdId` not reserved; no method invocation. |
+| `CommandLedger` already holds an intent entry with outcome `reserved` for the `cmdId`; refusal entries with outcome `denied` do not count | `command.replay` | Refusal published to NDATA; audit entry `denied`; no method invocation. |
+| No `CommandLedger` is configured (checked right after transport decoding, so nothing is recorded), a ledger segment cannot be read during the replay scan, or the reservation cannot be written and forced to disk | `command.ledger.required` | Refusal published to NDATA; `cmdId` not reserved; no method invocation. |
 | `CommandAuthorizer` static bounds or permissions fail | `command.policy.denied` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
 | OPA Rego policy evaluation evaluates to deny or faults | `command.opa.denied` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Target precondition read StatusCode not Good or age > `maxAgeMs` | `command.precondition` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| OPC UA method call returns non-Good or argument rejected | `command.method.failed` | Failure published to NDATA; intent entry retained; failure outcome recorded. |
-| Session timeout, network partition, or daemon crash after `fsync` | Outcome unknown | Command marked unknown; `cmdId` remains consumed; no automatic retry. |
+| Precondition cannot be resolved from the pinned release (the pinned file missing from the release or its bytes not matching, no mapping with that `field_id`, no OPC UA source, or a node that is not a member of the called object), live sample's source timestamp is in the future, target precondition read `StatusCode` not Good, or age > `maxAgeMs` | `command.precondition` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| OPC UA method call `StatusCode` or an input argument result is not Good (outcome `method-failed`), or the call threw, for example a lost session (outcome `unknown`) | `command.method.failed` | Failure published to NDATA with detail beginning `failed: command.method.failed (<outcome>)`; intent entry retained; failure outcome recorded; `cmdId` stays consumed; edge does not retry. |
+| Daemon crash after reservation | (none) | `reserved` entry left with no outcome entry; `cmdId` stays consumed; no automatic retry. |
 
 Post-reservation failure semantics:
-- All checks prior to step 8 terminate execution before the reservation is committed, leaving the `cmdId` unconsumed.
-- Once step 8 successfully flushes the reservation to disk via `fsync`, the `cmdId` is permanently consumed. If the subsequent OPC UA invocation fails, times out, or the process terminates abruptly, the command is never retried automatically.
+- All checks prior to step 10 terminate execution before the reservation is committed, leaving the `cmdId` unconsumed.
+- Once step 10 successfully flushes the reservation to disk via `fsync`, the `cmdId` is permanently consumed. If the subsequent OPC UA invocation fails, times out, or the process terminates abruptly, the command is never retried automatically.
 - Re-executing an aborted or unconfirmed command requires the agent to generate a fresh proposal statement with a new `cmdId`, capturing fresh evidence and obtaining a new operator co-signature.
 
 ## Testing and gates
@@ -432,7 +455,7 @@ The M2 test harnesses preserve all verification invariants established in M1:
    - Proves done: Sim test suite passes; existing variable read/write tests remain green.
 3. Step 2: Proposal Contracts and CLI Tooling
    - Repo: `bifrost`
-   - Content: Implement the in-toto proposal statement data model and predicate definitions. Add `PROPOSE_COMMAND` and `APPROVE_COMMAND` to `ActivationAction`. Implement `gates command approve`, `gates command verify`, and `gates command publish`. Author specification documentation in `docs/COMMAND-PROPOSAL.md`.
+   - Content: Implement the in-toto proposal statement data model and predicate definitions. Add `PROPOSE_COMMAND` and `APPROVE_COMMAND` to `ActivationAction`. Implement `gates command approve` and `gates command verify`. Author specification documentation in `docs/COMMAND-PROPOSAL.md`.
    - Proves done: Unit test suite confirms signature verification, approver mismatch rejection, invalid window rejection, and successful co-signature formatting.
 4. Step 3: OPA Policy and WebAssembly Tooling
    - Repo: `bifrost`
@@ -440,7 +463,7 @@ The M2 test harnesses preserve all verification invariants established in M1:
    - Proves done: The Rego parameter table test passes; CI passes the `--check` byte-equivalence verification.
 5. Step 4: Heimdall Method Execution Engine
    - Repo: `bifrost`
-   - Content: Add `op=method` handling to `NcmdOpcUaBridge`. Implement the durable `fsync` replay reservation in `CommandLedger`. Implement the nine ordered execution checks. Add `Applier.method` calling Milo's `CallMethodRequest`. Implement Gate (iii) with its negative control.
+   - Content: Add `op=method` handling to `NcmdOpcUaBridge`. Implement the durable `fsync` replay reservation in `CommandLedger`. Implement the eleven ordered execution checks. Add `Applier.method` calling Milo's `CallMethodRequest`. Implement `gates command publish`. Implement Gate (iii) with its negative control.
    - Proves done: Gate (iii) passes all seven cases and exits non-zero under its negative control.
 6. Step 5: Agent Proposal Signer CLI
    - Repo: `vor`
