@@ -1,0 +1,30 @@
+{
+  "kind": "mapping-proposal",
+  "schemaVersion": "2.23.0",
+  "id": "semantics-workspace",
+  "version": "1.0.0",
+  "baseRelease": null,
+  "files": [
+    {
+      "path": "semantics/0.json",
+      "kind": "semantic-definition",
+      "id": "mixer-model",
+      "version": "1.0.0",
+      "sha256": "37ecc264594e95391f1555433d52664ceb646ac5c22a643a01c2dcbb15027883"
+    },
+    {
+      "path": "lifecycle/0.json",
+      "kind": "semantic-lifecycle",
+      "id": "mixer-temp-deprecate",
+      "version": "1.0.0",
+      "sha256": "1c64a6162c49a9b771cb2d0e38513539b9e95cad10070bd0f6ac62f59d0f5bd6"
+    },
+    {
+      "path": "lifecycle/1.json",
+      "kind": "semantic-lifecycle",
+      "id": "mixer-temp-retire",
+      "version": "1.0.0",
+      "sha256": "5f424589dd114cebb17a38d194737d5f5f3e35b411eede6d031d8a4ac6b3494d"
+    }
+  ]
+}

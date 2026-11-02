@@ -1,0 +1,21 @@
+{
+  "kind": "mapping-submission",
+  "schemaVersion": "2.9.0",
+  "id": "semantics",
+  "streamId": "semantics",
+  "version": "1.0.0",
+  "workspaceSha256": "88d31de255a0483c9513dcc027dd6fe534ee3ffb697a6ebb395831efebee2adf",
+  "proposalSha256": "88d31de255a0483c9513dcc027dd6fe534ee3ffb697a6ebb395831efebee2adf",
+  "baseRelease": null,
+  "proposedBy": "proposer",
+  "execution": "excluded",
+  "context": {
+    "equipment": [
+      {
+        "id": "mixer1",
+        "label": "Mixer 1"
+      }
+    ],
+    "connections": []
+  }
+}

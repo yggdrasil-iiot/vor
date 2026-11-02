@@ -1,0 +1,24 @@
+{
+  "kind": "semantic-definition",
+  "schemaVersion": "2.12.0",
+  "id": "mixer-model",
+  "version": "1.0.0",
+  "members": [
+    {
+      "memberId": "temp",
+      "name": "Temp",
+      "semanticId": "urn:bifrost:sem:Mixer/Temp",
+      "description": "Mixer process temperature",
+      "valueType": "Double",
+      "unit": {
+        "status": "known",
+        "code": "Cel"
+      },
+      "role": "measurement",
+      "range": {
+        "low": "0",
+        "high": "450"
+      }
+    }
+  ]
+}

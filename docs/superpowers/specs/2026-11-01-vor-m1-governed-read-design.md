@@ -46,7 +46,7 @@ The implementation boundaries span two existing repositories, one new repository
 |---|---|
 | Muninn | `SampledMember` gains `statusCode`, `sourceTimestamp`, and `serverTimestamp`. `OpcUaInstanceBrowser` keeps the full `DataValue` (it already requests both timestamps). `SparkplugCodec` writes the per-metric timestamp and properties using Eclipse Tahu 1.0.14 `MetricBuilder.timestamp` and `properties`. Egress validation logic remains unchanged. |
 | Bifrost sim | Adds one writable status-control node per governed member (for example, `Sim/Line1/Mixer1.Temp.StatusCode`, UInt32) that re-sets the member with a `DataValue` carrying that `StatusCode` and fresh timestamps using the Eclipse Milo 1.1.8 four-argument `DataValue` constructor. The default value remains Good so that existing test gates are unaffected. Today every simulation node is created Good. |
-| Bifrost publication | Generates a synthetic release containing the record mapping, equipment hierarchy, semantic lifecycle, temporal policy, and the read binding packaged as an `evidence-artifact`. No change to Bifrost core contracts is planned. |
+| Bifrost publication | Generates a synthetic release containing the mapping set, equipment hierarchy, semantic definition, temporal policy, and the read binding packaged as an `evidence-artifact`. Semantic lifecycle events come from separate lifecycle-only releases. No Bifrost core contract changed. |
 | Vor (new) | New Python repository consisting of five core modules: `release.py`, `head.py`, `stream.py`, `verdict.py`, and `server.py`. |
 | Mimir | No change. |
 | Tyr | No change. |
@@ -125,39 +125,36 @@ Field names alone cannot bind a governed field to a Sparkplug metric. Muninn ide
 
 To bridge this namespace difference without runtime lookup services, Bifrost publishes a versioned JSON read binding document inside the release payload as an `evidence-artifact`. The Bifrost contract schema for an `evidence-artifact` natively supports a file path, a raw SHA-256 digest, and a media type string.
 
-The read binding JSON document contains the following fields:
+The read binding JSON document is published in the release payload as a data file referenced by an evidence-artifact (`payload/data/vor-read-binding.json` in the fixture release). Its field names use camelCase, matching Bifrost's contract naming:
 - `profileVersion`: Schema version of the read binding format.
-- `stream_id`: Unique identifier of the stream binding.
-- `recordMappingRef`: Reference to the parent record mapping in the release.
-- `field_id`: Target governed field identifier within the mapping.
+- `streamId`: Unique identifier of the release stream.
+- `mappingSetRef`: Reference object `{id, version}` identifying the mapping set in the release.
+- `mappingId`: Mapping identifier within the mapping set, corresponding to the field identifier used in the semantic pin.
 - `equipmentInstanceId`: Canonical equipment instance identifier.
 - `semanticId`: Governed semantic term identifier.
 - `group`: Sparkplug group identifier.
 - `edge`: Sparkplug edge node identifier.
 - `device`: Sparkplug device identifier.
 - `metric`: Sparkplug metric name matching the Muninn browse name.
-- `governed_definition_sha256`: SHA-256 digest of the governed definition.
+- `governedDefinitionRef`: Reference object `{templateRef, version, sha256}` identifying the governed definition published by Muninn.
 - `projection`: String constant `identity`.
 
-Because this document is stored inside the cryptographically approved and signed release, the field-to-metric link is fully governed. Vor verifies every reference, the equipment association, field type, engineering unit, and the `identity` projection declaration. Any projection value other than `identity` is rejected.
+Vor verifies that all fields are present and that `projection` is `identity`. It confirms that `streamId` equals the head's stream; that `mappingSetRef` resolves to a mapping-set document in the release, and that the set's target and semantic definition resolve; that `equipmentInstanceId` matches the mapping set; and that `mappingId` exists in the set. It verifies that the mapping's member path resolves to a member whose `semanticId` equals the binding's, that the member name equals `metric`, that the mapping's source node identifier ends with `"." + metric`, and that the output unit is present. Finally, Vor confirms that the equipment hierarchy contains exactly one path to `equipmentInstanceId` and that `device` equals that ISA-95 path. A failure of any of these checks results in a `binding-invalid` outcome with the failing rule named in the evidence.
 
 ### Policy source (release → Vor)
 
 Vor enforces policy; it never defines policy. Policy is authored and published exclusively inside Bifrost releases.
 
-Vor processes two policy formats depending on the release structure:
-1. For a mapping-set binding, the policy is defined in `temporalPolicy`. Required fields include:
-   - `timestampBasis`: Choice of `source` or `server`.
-   - `maxAgeMs`: Maximum permitted sample age in milliseconds.
-   - `maxSkewMs`: Maximum permitted timestamp skew across inputs in milliseconds.
-   - `uncertainInput`: Handling rule, set to `propagate` or `reject`.
-   - `missingInput`: Handling rule, set to `reject`.
-   - `badInput`: Handling rule, set to `propagate`.
-   - `assembly`: Input assembly mode, set to `latest` or `trigger-sequence`.
-2. For a 2.22 record mapping, the policy is defined in `commonPolicy`. Fields include:
-   - `maxAgeMs`: Maximum permitted sample age in milliseconds.
-   - `maxSkewMs`: Maximum permitted timestamp skew across inputs in milliseconds.
-   - `uncertainInput`: Handling rule, set to `propagate` or `reject`.
+Vor reads one policy format: the read binding names a mapping in a mapping set, and the policy is that mapping's `temporalPolicy`. Required fields include:
+- `timestampBasis`: Choice of `source` or `server`.
+- `maxAgeMs`: Maximum permitted sample age in milliseconds.
+- `maxSkewMs`: Maximum permitted timestamp skew across inputs in milliseconds.
+- `uncertainInput`: Handling rule, set to `propagate` or `reject`.
+- `missingInput`: Handling rule, set to `reject`.
+- `badInput`: Handling rule, set to `propagate`.
+- `assembly`: Input assembly mode, set to `latest` or `trigger-sequence`.
+
+The 2.22 record mapping `commonPolicy` (mode `single-virtual-frame`, `maxAgeMs`, `maxSkewMs`, `uncertainInput`) is not a policy source in M1. A 2.22 record mapping is a finite broadcast recipe — a declared result set from a provider query with common scalar sources broadcast to every row — and `commonPolicy` governs that whole virtual frame. Bifrost validates the recipe but executes no provider, and Muninn publishes OPC UA instance members only, so no runtime puts record rows on the Sparkplug wire for Vor to judge (see the Open questions section).
 
 A read binding lacking a valid policy specification is refused with reason code `policy-missing`.
 
@@ -243,8 +240,8 @@ The operational data flow executes in four distinct phases:
 ```
 
 1. **Publication**: An operator publishes a release containing a signed DSSE head. Bifrost enforces that the publisher and approver identities are distinct cryptographic key pairs.
-2. **Bootstrap and Verification**: Vor loads the release directory. It verifies the DSSE head using Ed25519 public keys, confirms that the publisher and approver keys differ, checks that the head version meets or exceeds the local rollback floor, and asserts that the current wall-clock time is before the head expiration timestamp. It then calculates the SHA-256 digest of `release.json` over raw bytes, confirms the digest against the head subject, and verifies the proposal and payload files. Vor parses the read binding JSON, locating the referenced semantic member, engineering unit, lifecycle state, ISA-95 equipment hierarchy path, and temporal policy.
-3. **Telemetry Ingestion**: Vor connects to the MQTT broker and subscribes to Muninn's Sparkplug B output topic for the bound group, edge, and device. When a birth or data message arrives, Vor inspects the payload. It verifies that the Sparkplug device identifier matches the equipment hierarchy path generated by Muninn. It decodes `Quality`, `ua_statuscode`, `ua_server_timestamp`, and the metric-level source `timestamp`. Vor stores the single latest sample in an in-memory cache keyed by metric path. If a death message arrives or sequence counter gaps occur, the cache entry is invalidated.
+2. **Bootstrap and Verification**: Vor performs bootstrap and verification on every `read_governed` call rather than once at startup, re-reading the registry per call. It verifies the DSSE head using Ed25519 public keys from a separately configured trusted keys file that lives outside the registry, ensuring that a registry cannot supply its own keys. Vor confirms that the publisher and approver keys differ and asserts that the current wall-clock time is before the head expiration timestamp. It validates the head against the rollback floor, which is stored per stream in a state directory (recording the head version and statement digest) and survives restarts; the head version must meet or exceed the floor, and a same-version head with a different statement digest results in a `head-rollback` failure. Vor calculates the SHA-256 digest of `release.json` over raw bytes, confirms the digest against the head subject, and verifies the proposal and payload files. To establish lifecycle state, Vor replays semantic lifecycle events found in the releases at every stream head in the registry (such as a lifecycle-only release on a separate semantics stream). Every one of those stream heads must pass the same verification; if any fails, the read is refused with that head's reason. Vor then parses the read binding JSON, locating the referenced semantic member, engineering unit, ISA-95 equipment hierarchy path, and temporal policy.
+3. **Telemetry Ingestion**: Vor connects to the MQTT broker, subscribes to `spBv1.0/#` with QoS 1, and publishes nothing. A session starts at an NBIRTH message with sequence counter 0, and sequence counters must continue modulo 256. A sequence counter gap, an NDEATH, a DDEATH, or an undecodable payload drops the edge node's samples until the next birth; data received outside an active session is ignored. Vor caches nothing until it sees a birth. If Vor starts after the edge node's NBIRTH, it answers `no-sample` until the next birth. Because Vor publishes nothing, it does not send rebirth requests; a Sparkplug primary host application or an operator sends the rebirth request (an NCMD with `Node Control/Rebirth = true`). In verification against a real Muninn session, starting after the birth caused Vor to answer `no-sample`, and issuing one rebirth request transitioned it to answering `usable`. When a birth or data message arrives within a session, Vor decodes `Quality`, `ua_statuscode`, `ua_server_timestamp`, and the metric-level source `timestamp`. Vor stores the single latest sample in an in-memory cache keyed by metric path. Each message replaces a sample whole; no metadata is carried over from an earlier message. The Sparkplug device identifier is verified against the ISA-95 equipment hierarchy path during evaluation (yielding reason `location-mismatch`), not at ingestion.
 4. **Tool Execution**: On every invocation of `read_governed(question_id)`, Vor executes the evaluation pipeline. It re-verifies the release head expiration against current wall-clock time and checks that the semantic lifecycle state has not transitioned to retired. It extracts the cached sample for the bound metric. Vor computes sample age using the configured `timestampBasis`, calculates timestamp skew, maps the OPC UA status code, and applies the temporal policy. If all checks pass, Vor returns a complete answer payload. If any check fails, Vor halts immediately and returns a refusal payload containing the corresponding reason code and diagnostic evidence.
 
 ## Failure handling
@@ -355,7 +352,8 @@ The M3 milestone expands automated modeling: Mimir derives callable Method defin
 
 ## Open questions
 
-Three implementation questions remain open for resolution:
-1. **Read-binding survival**: Step 0 of the delivery plan must confirm whether the Bifrost publication pipeline preserves the evidence-artifact file bytes exactly. The outcome determines the exact serialization format used for release fixtures.
-2. **Retirement visibility**: Determine whether published release bytes preserve the full semantic lifecycle transition history or retain only the current state descriptor. Vor must be able to confirm that a meaning is retired directly from the release payload without querying an external registry service.
-3. **Skew definition**: Confirm that the single-scalar zero-skew and multi-input spread interpretation ($\max(T_{\text{source}}) - \min(T_{\text{source}})$) matches Bifrost's planned evaluation logic before Vor implements `maxSkewMs` validation for multi-input compound values.
+Two implementation questions remain open for resolution; two are resolved:
+1. **Read-binding survival** (resolved): The step 0 spike confirmed that Bifrost's approval and publication preserve the evidence-artifact file bytes exactly, with no Bifrost code change; a Bifrost regression test now holds this (Bifrost PR #38). Vor's fixture registries are written by Bifrost's own CLI.
+2. **Retirement visibility** (resolved): Lifecycle events are carried in published releases (lifecycle-only releases), and Vor replays them from the releases at every verified stream head in the registry, so retirement is confirmed from release bytes alone, without an external registry service. A head that fails verification refuses the read.
+3. **Skew definition**: M1 binds a single scalar, so skew is zero; the multi-input spread definition ($\max(T_{\text{source}}) - \min(T_{\text{source}})$) still needs to be confirmed against Bifrost before multi-input values are supported.
+4. **Record-mapping reads**: Reading a field of a 2.22 record mapping under its `commonPolicy` needs a runtime that executes the recipe and publishes its rows (each value with its source timestamp and status) on the wire; no Yggdrasil component does this today. When one exists, the read binding gains a record-mapping form (record mapping reference plus field id) and Vor applies `commonPolicy`, including the multi-input skew of item 3 over the frame's inputs.

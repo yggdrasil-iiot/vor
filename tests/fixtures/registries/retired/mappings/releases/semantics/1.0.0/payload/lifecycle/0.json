@@ -1,0 +1,17 @@
+{
+  "kind": "semantic-lifecycle",
+  "schemaVersion": "2.18.0",
+  "id": "mixer-temp-deprecate",
+  "version": "1.0.0",
+  "semanticId": "urn:bifrost:sem:Mixer/Temp",
+  "revision": 1,
+  "previousEvent": null,
+  "signatureSha256": "f4a64cf4d0a255cf5e53609508b7db4d8b1e58ed0d727e6c04dc13c691572ffb",
+  "action": "deprecate",
+  "replacementSemanticId": null,
+  "label": "Mixer process temperature",
+  "description": "Synthetic lifecycle event",
+  "reason": "Synthetic fixture; not field evidence",
+  "authoredBy": "fixture-author",
+  "authoredAt": "2026-11-01T00:00:01Z"
+}

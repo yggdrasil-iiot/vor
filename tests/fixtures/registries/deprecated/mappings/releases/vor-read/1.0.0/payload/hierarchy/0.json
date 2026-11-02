@@ -1,0 +1,56 @@
+{
+  "kind": "equipment-hierarchy",
+  "schemaVersion": "2.23.0",
+  "id": "vor-plant",
+  "version": "1.0.0",
+  "label": "Synthetic plant",
+  "levelVocabulary": "opc-10030-1.00-isa95-equipment-element-level-enum",
+  "nodes": [
+    {
+      "equipmentInstanceId": "synthetic-site",
+      "label": "Synthetic site",
+      "equipmentLevel": "SITE_1",
+      "parentEquipmentInstanceId": null,
+      "evidenceRefs": [
+        {
+          "artifactId": "hierarchy-plant-register",
+          "locator": {
+            "kind": "text-line",
+            "line": 2
+          }
+        }
+      ]
+    },
+    {
+      "equipmentInstanceId": "line1",
+      "label": "Line 1",
+      "equipmentLevel": "PRODUCTIONLINE_5",
+      "parentEquipmentInstanceId": "synthetic-site",
+      "evidenceRefs": [
+        {
+          "artifactId": "hierarchy-plant-register",
+          "locator": {
+            "kind": "text-line",
+            "line": 3
+          }
+        }
+      ]
+    },
+    {
+      "equipmentInstanceId": "mixer1",
+      "label": "Mixer 1",
+      "equipmentLevel": "WORKCELL_6",
+      "parentEquipmentInstanceId": "line1",
+      "evidenceRefs": [
+        {
+          "artifactId": "hierarchy-plant-register",
+          "locator": {
+            "kind": "text-line",
+            "line": 4
+          }
+        }
+      ]
+    }
+  ],
+  "evidenceRefs": []
+}

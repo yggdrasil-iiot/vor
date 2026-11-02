@@ -1,0 +1,36 @@
+{
+  "kind": "mapping-submission",
+  "schemaVersion": "2.9.0",
+  "id": "vor-read-fixture",
+  "streamId": "line1",
+  "version": "1.0.0",
+  "workspaceSha256": "f6a8549154f9b1ae52609565915a093b5837476c2342dd93743ff05a4dbbb6f1",
+  "proposalSha256": "f6a8549154f9b1ae52609565915a093b5837476c2342dd93743ff05a4dbbb6f1",
+  "baseRelease": null,
+  "proposedBy": "proposer",
+  "execution": "excluded",
+  "context": {
+    "equipment": [
+      {
+        "id": "synthetic-site",
+        "label": "Synthetic site"
+      },
+      {
+        "id": "line1",
+        "label": "Line 1"
+      },
+      {
+        "id": "mixer1",
+        "label": "Mixer 1"
+      }
+    ],
+    "connections": [
+      {
+        "id": "sim-opcua",
+        "label": "Bifrost OPC-UA sim",
+        "equipmentInstanceId": "mixer1",
+        "accessProfileRef": "s7-1500-opcua-v1"
+      }
+    ]
+  }
+}

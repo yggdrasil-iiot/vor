@@ -1,0 +1,65 @@
+{
+  "kind": "mapping-proposal",
+  "schemaVersion": "2.23.0",
+  "id": "local-workspace",
+  "version": "1.0.0",
+  "baseRelease": null,
+  "files": [
+    {
+      "path": "hierarchy/0.json",
+      "kind": "equipment-hierarchy",
+      "id": "vor-plant",
+      "version": "1.0.0",
+      "sha256": "8332202c5f6b0d4f244d966e393d2795c7d9db5ce95a646fa0ebd5a0fd26a076"
+    },
+    {
+      "path": "evidence/hierarchy-0.json",
+      "kind": "evidence-artifact",
+      "id": "hierarchy-plant-register",
+      "version": "1.0.0",
+      "sha256": "d54456b9a5b22cfddbe382424875a200a3dc613b1679f0d34d9a7221c8cf9fc9"
+    },
+    {
+      "path": "evidence/0.json",
+      "kind": "evidence-artifact",
+      "id": "manual-mixer1-temp",
+      "version": "1.0.0",
+      "sha256": "04fa22c5870dee4969497ede0c6312eaccddecf3923e4dc4dcfd931f8859d43f"
+    },
+    {
+      "path": "evidence/vor-read-binding.json",
+      "kind": "evidence-artifact",
+      "id": "vor-binding-mixer1-temp",
+      "version": "1.0.0",
+      "sha256": "293319488ec58f2c0243e305086bcd58807599aad5d734bd1e3e5b82836b9bcb"
+    },
+    {
+      "path": "mappings/0.json",
+      "kind": "mapping-set",
+      "id": "mixer1-mapping",
+      "version": "1.0.0",
+      "sha256": "0cfbc62562b703d2f4272ddec191b22dfa377ebea33f583668e45ee2bfe414df"
+    },
+    {
+      "path": "semantics/0.json",
+      "kind": "semantic-definition",
+      "id": "mixer-model",
+      "version": "1.0.0",
+      "sha256": "37ecc264594e95391f1555433d52664ceb646ac5c22a643a01c2dcbb15027883"
+    },
+    {
+      "path": "sources/0.json",
+      "kind": "source-definition",
+      "id": "mixer1-temp",
+      "version": "1.0.0",
+      "sha256": "3247c67e2e46c6fc904e275b810f3c734fb88d5d25707e7a343a8471bcecf05a"
+    },
+    {
+      "path": "targets/0.json",
+      "kind": "target-instance",
+      "id": "mixer1",
+      "version": "1.0.0",
+      "sha256": "626a60e36507cb01cf7e65aa623a9c44232d02ec88df94e877f762935fc19d31"
+    }
+  ]
+}

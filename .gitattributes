@@ -1,0 +1,3 @@
+# Hash-pinned bytes: Bifrost published these registries and Muninn wrote the captured payloads. A line-ending
+# conversion on checkout would change every digest Vor verifies.
+tests/fixtures/** -text
