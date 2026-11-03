@@ -45,7 +45,7 @@ def test_the_cache_takes_the_latest_temp_from_the_real_session():
     c = SampleCache(clock_ms=lambda: 7)
     for topic, f in zip(TOPICS, FILES):
         c.on_message(topic, raw(f))
-    s = c.get(GROUP, EDGE, "Temp")
+    s = c.get(GROUP, EDGE, DEVICE, "Temp")
     last = next(m for m in sparkplug.decode(raw("4-ddata.bin")).metrics if m.name == "Temp")
     assert (s.value, s.seq, s.device, s.datatype) == (200.0, 3, DEVICE, sparkplug.DOUBLE)
     assert (s.source_timestamp, s.server_timestamp, s.status_code, s.quality) == (

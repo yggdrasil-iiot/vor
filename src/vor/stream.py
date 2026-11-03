@@ -4,6 +4,9 @@ A sample is cached only inside a session Vor saw begin: an NBIRTH (seq 0) opens 
 edge node must carry the next seq (0-255, wrapping). A gap, an NDEATH or a DDEATH drops the cached samples, and data
 that arrives outside an open session is not cached, so a reader started mid-session reports no sample until the next
 birth. Each sample replaces the previous one whole: metadata is never carried over from an earlier message.
+
+Samples are keyed by group, edge, device and metric, so two devices of one edge that publish the same metric name
+keep a sample each; node-level data (NBIRTH, NDATA) has no device.
 """
 
 from __future__ import annotations
@@ -39,15 +42,22 @@ class SampleCache:
         self._clock_ms = clock_ms
         self._lock = threading.Lock()
         self._next_seq: dict[tuple[str, str], int] = {}
-        self._samples: dict[tuple[str, str, str], Sample] = {}
+        self._samples: dict[tuple[str, str, str | None, str], Sample] = {}
 
-    def get(self, group: str, edge: str, metric: str) -> Sample | None:
+    def get(self, group: str, edge: str, device: str | None, metric: str) -> Sample | None:
         with self._lock:
-            return self._samples.get((group, edge, metric))
+            return self._samples.get((group, edge, device, metric))
+
+    def elsewhere(self, group: str, edge: str, device: str | None, metric: str) -> Sample | None:
+        """The most recently received sample of the metric on the edge under any device other than this one."""
+        with self._lock:
+            others = [s for k, s in self._samples.items()
+                      if k[0] == group and k[1] == edge and k[2] != device and k[3] == metric]
+        return max(others, key=lambda s: s.received_at, default=None)
 
     def _drop(self, group: str, edge: str, device: str | None = None) -> None:
-        for key in [k for k, s in self._samples.items()
-                    if k[0] == group and k[1] == edge and (device is None or s.device == device)]:
+        for key in [k for k in self._samples
+                    if k[0] == group and k[1] == edge and (device is None or k[2] == device)]:
             del self._samples[key]
 
     def on_message(self, topic: str, data: bytes) -> None:
@@ -94,7 +104,7 @@ class SampleCache:
                 if m.name is None:
                     continue
                 props = m.properties
-                self._samples[(group, edge, m.name)] = Sample(
+                self._samples[(group, edge, device, m.name)] = Sample(
                     topic=topic, device=device, metric=m.name, datatype=m.datatype, value=m.value,
                     quality=props.get(QUALITY), status_code=props.get(UA_STATUSCODE),
                     source_timestamp=m.timestamp, server_timestamp=props.get(UA_SERVER_TIMESTAMP),

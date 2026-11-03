@@ -61,7 +61,11 @@ class Vor:
             governed = load(self.mappings, load_trusted_keys(self.trusted_keys), self.floors, now_ms,
                             question_id, q.stream, q.binding)
             b = governed.binding
-            return evaluate(governed, self.cache.get(b["group"], b["edge"], b["metric"]), now_ms)
+            # A sample under another device of the edge is evaluated only when the bound device has none, so that
+            # data published under the wrong device id is refused location-mismatch rather than no-sample.
+            sample = (self.cache.get(b["group"], b["edge"], b["device"], b["metric"])
+                      or self.cache.elsewhere(b["group"], b["edge"], b["device"], b["metric"]))
+            return evaluate(governed, sample, now_ms)
         except Refusal as r:
             out = r.payload()
             out["verdict"]["evidence"].setdefault("questionId", question_id)
