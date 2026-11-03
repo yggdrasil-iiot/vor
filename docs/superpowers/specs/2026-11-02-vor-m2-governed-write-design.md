@@ -104,7 +104,7 @@ M2 preserves the architectural boundary of zero shared code between applications
  |  |  - Policy: CommandAuthorizer, then OPA (Wasm)                           |  |
  |  |  - Live Precondition: Direct OPC UA read of Line1/Mixer1.Temp           |  |
  |  |  - Execution: Applier.method -> Milo CallMethodRequest                  |  |
- |  |  - Egress: NDATA response metric                                        |  |
+ |  |  - Egress: RESULT response topic                                        |  |
  |  +-------------------------------------+-----------------------------------+  |
  |                                        |                                      |
  |                                        v OPC UA TCP (Session Bound)           |
@@ -124,7 +124,7 @@ The system is decomposed into explicit architectural boundaries:
   - `gates command verify`: Parses an envelope offline, verifying signature integrity, format correctness, and cryptographic binding against the local model registry.
   - `gates command approve`: Ingests an agent proposal, verifies the proposer signature, checks the embedded evidence pin and digests, confirms that the validity window does not exceed 15 minutes, checks argument bounds, appends a co-signature without re-serializing the payload, and outputs `<cmdId>.approved.dsse.json`.
   - `gates command publish`: Transmits an approved envelope to the message broker as an NCMD Sparkplug B metric.
-- Heimdall (Java, `bifrost` repository): The write-boundary daemon. Ingests NCMD messages through `NcmdOpcUaBridge.messageArrived`, enforces the verification sequence, logs reservations to `CommandLedger`, evaluates OPA policy, samples live preconditions over OPC UA, and dispatches the call via `Applier.method`. Responses are published to the corresponding NDATA topic.
+- Heimdall (Java, `bifrost` repository): The write-boundary daemon. Ingests NCMD messages through `NcmdOpcUaBridge.messageArrived`, enforces the verification sequence, logs reservations to `CommandLedger`, evaluates OPA policy, samples live preconditions over OPC UA, and dispatches the call via `Applier.method`. Responses are published to `bifrost/<group>/RESULT/<edge>`.
 - Bifrost Simulation (`EmbeddedMiloSim`, `bifrost` repository): Provides the OPC UA server fixture. Hosts `Line1/Mixer1` and its method `SetTemperature`. The existing `GovernedWriteFilter` (which restricts writes to sessions presenting an authorized cryptographic thumbprint) is extended to gate the `UserExecutable` attribute of Method nodes, ensuring that unauthorized or anonymous sessions cannot invoke Methods.
 - Background Daemons: Muninn, Tyr, Mimir, and Huginn require no modifications in M2.
 
@@ -200,7 +200,7 @@ Delivery constraints enforced by Heimdall:
 - The MQTT topic elements (`<group>`, `<edge>`) must match the `target.group` and `target.edge` fields within the signed proposal statement.
 - Outer transport properties are untrusted; all execution semantics derive strictly from the signed proposal payload.
 - Legacy `write` and `call` operations continue to use their existing metric identifiers and transport property fields (`sub`, `sig`).
-- Transmitting commands via NCMD rather than file-drop mechanisms maintains unified ingress logging, single-point ledger recording, and consistent NDATA response dispatching.
+- Transmitting commands via NCMD rather than file-drop mechanisms maintains unified ingress logging, single-point ledger recording, and consistent RESULT response dispatching.
 
 ### Method target
 
@@ -324,7 +324,7 @@ When an NCMD message arrives at Heimdall's ingress bridge (`NcmdOpcUaBridge.mess
 10. Durable reservation:
    Heimdall appends an intent entry with outcome `reserved` (fields `group`, `edge`, `cmdId`, `subject` = `proposedBy`, `command` = `methodNodeId`, `value`, `type`, and the timestamp `at`) to `CommandLedger` and forces it to disk (`FileChannel.force`, i.e. fsync) before the call. The replay check is repeated under the ledger's lock so two deliveries cannot both reserve. An already-reserved command returns `command.replay`; a ledger I/O failure returns `command.ledger.required`.
 11. Method invocation:
-   Heimdall issues a `CallMethodRequest` to `methodNodeId` on `objectNodeId` with the one input. The invocation is applied only when the call StatusCode and every input argument result are `Good`. An outcome entry follows: `applied`, `method-failed`, or `unknown` when the call threw. For NDATA, on success the first output argument is returned as value; on failure the detail begins `failed: command.method.failed (<outcome>)`.
+   Heimdall issues a `CallMethodRequest` to `methodNodeId` on `objectNodeId` with the one input. The invocation is applied only when the call StatusCode and every input argument result are `Good`. An outcome entry follows: `applied`, `method-failed`, or `unknown` when the call threw. For the RESULT answer, on success the first output argument is returned as value; on failure the detail begins `failed: command.method.failed (<outcome>)`.
 
 Execution configuration invariants:
 - Refusals occurring during steps 1 through 9 abort processing before any reservation and plant interaction and are recorded in `CommandLedger` as audit entries with outcome `denied`, which do not consume the `cmdId`; a refusal at step 2 has no ledger to record into, and an audit append that fails is logged by the bridge instead.
@@ -335,19 +335,19 @@ Execution configuration invariants:
 
 | Condition | Reason Code | Effect |
 | :--- | :--- | :--- |
-| Metric payload malformed, missing, or extraneous metrics present | `command.malformed` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| DSSE signature invalid, corrupt, or fewer than two signatures | `command.signature` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Both signatures resolve to identical public key or principal | `identity.four-eyes.same-key` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Approving co-signer does not match `approvedBy` principal | `command.approver.mismatch` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| System time outside `[notBefore, notAfter)` or span > 15 minutes | `command.window` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Head digest or release digest does not match current registry | `command.head.mismatch` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Embedded M1 evidence verdict is not `usable` | `command.evidence.unusable` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| `CommandLedger` already holds an intent entry with outcome `reserved` for the `cmdId`; refusal entries with outcome `denied` do not count | `command.replay` | Refusal published to NDATA; audit entry `denied`; no method invocation. |
-| No `CommandLedger` is configured (checked right after transport decoding, so nothing is recorded), a ledger segment cannot be read during the replay scan, or the reservation cannot be written and forced to disk | `command.ledger.required` | Refusal published to NDATA; `cmdId` not reserved; no method invocation. |
-| `CommandAuthorizer` static bounds or permissions fail | `command.policy.denied` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| OPA Rego policy evaluation evaluates to deny or faults | `command.opa.denied` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| Precondition cannot be resolved from the pinned release (the pinned file missing from the release or its bytes not matching, no mapping with that `field_id`, no OPC UA source, or a node that is not a member of the called object), live sample's source timestamp is in the future, target precondition read `StatusCode` not Good, or age > `maxAgeMs` | `command.precondition` | Refusal published to NDATA; audit entry `denied`; `cmdId` not reserved; no method invocation. |
-| OPC UA method call `StatusCode` or an input argument result is not Good (outcome `method-failed`), or the call threw, for example a lost session (outcome `unknown`) | `command.method.failed` | Failure published to NDATA with detail beginning `failed: command.method.failed (<outcome>)`; intent entry retained; failure outcome recorded; `cmdId` stays consumed; edge does not retry. |
+| Metric payload malformed, missing, or extraneous metrics present | `command.malformed` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| DSSE signature invalid, corrupt, or fewer than two signatures | `command.signature` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| Both signatures resolve to identical public key or principal | `identity.four-eyes.same-key` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| Approving co-signer does not match `approvedBy` principal | `command.approver.mismatch` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| System time outside `[notBefore, notAfter)` or span > 15 minutes | `command.window` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| Head digest or release digest does not match current registry | `command.head.mismatch` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| Embedded M1 evidence verdict is not `usable` | `command.evidence.unusable` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| `CommandLedger` already holds an intent entry with outcome `reserved` for the `cmdId`; refusal entries with outcome `denied` do not count | `command.replay` | Refusal published to RESULT; audit entry `denied`; no method invocation. |
+| No `CommandLedger` is configured (checked right after transport decoding, so nothing is recorded), a ledger segment cannot be read during the replay scan, or the reservation cannot be written and forced to disk | `command.ledger.required` | Refusal published to RESULT; `cmdId` not reserved; no method invocation. |
+| `CommandAuthorizer` static bounds or permissions fail | `command.policy.denied` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| OPA Rego policy evaluation evaluates to deny or faults | `command.opa.denied` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| Precondition cannot be resolved from the pinned release (the pinned file missing from the release or its bytes not matching, no mapping with that `field_id`, no OPC UA source, or a node that is not a member of the called object), live sample's source timestamp is in the future, target precondition read `StatusCode` not Good, or age > `maxAgeMs` | `command.precondition` | Refusal published to RESULT; audit entry `denied`; `cmdId` not reserved; no method invocation. |
+| OPC UA method call `StatusCode` or an input argument result is not Good (outcome `method-failed`), or the call threw, for example a lost session (outcome `unknown`) | `command.method.failed` | Failure published to RESULT with detail beginning `failed: command.method.failed (<outcome>)`; intent entry retained; failure outcome recorded; `cmdId` stays consumed; edge does not retry. |
 | Daemon crash after reservation | (none) | `reserved` entry left with no outcome entry; `cmdId` stays consumed; no automatic retry. |
 
 Post-reservation failure semantics:
@@ -379,7 +379,7 @@ Gate (iii) is an end-to-end integration test executed within the `bifrost` repos
 
 Execution assertions:
 1. Normal execution:
-   An agent proposal targeting `Line1/Mixer1.SetTemperature` with argument `42.0` is co-signed via `gates command approve` and dispatched via `gates command publish`. The gate asserts that Heimdall processes the message, the sim reports that `Line1/Mixer1.Temp` changed to `42.0`, a successful outcome entry is logged, and an affirmative NDATA metric is emitted.
+   An agent proposal targeting `Line1/Mixer1.SetTemperature` with argument `42.0` is co-signed via `gates command approve` and dispatched via `gates command publish`. The gate asserts that Heimdall processes the message, the sim reports that `Line1/Mixer1.Temp` changed to `42.0`, a successful outcome entry is logged, and an affirmative RESULT answer is emitted.
 2. Direct replay rejection:
    Publishing the identical approved message a second time fails with reason code `command.replay`, leaving the sim value unchanged.
 3. Post-restart replay rejection:
