@@ -7,6 +7,8 @@ from vor.stream import SampleCache
 GROUP, EDGE = "Bifrost:Line1", "recipe-edge"
 NBIRTH, NDEATH = f"spBv1.0/{GROUP}/NBIRTH/{EDGE}", f"spBv1.0/{GROUP}/NDEATH/{EDGE}"
 DBIRTH, DDEATH = TOPIC.replace("DDATA", "DBIRTH"), TOPIC.replace("DDATA", "DDEATH")
+MIXER2 = "synthetic-site:line1:mixer2"
+TOPIC2 = TOPIC.replace(DEVICE, MIXER2)
 
 
 def cache() -> SampleCache:
@@ -14,7 +16,7 @@ def cache() -> SampleCache:
 
 
 def temp(c: SampleCache):
-    return c.get(GROUP, EDGE, "Temp")
+    return c.get(GROUP, EDGE, DEVICE, "Temp")
 
 
 def test_birth_then_data_is_cached_with_its_metadata():
@@ -88,3 +90,38 @@ def test_other_namespaces_are_ignored():
     c.on_message("spAv1.0/x/NBIRTH/y", payload(0))
     c.on_message("plain/topic", b"")
     assert temp(c) is None
+
+
+def test_two_devices_on_one_edge_keep_their_own_sample_of_the_same_metric():
+    c = cache()
+    c.on_message(NBIRTH, payload(0))
+    c.on_message(TOPIC, payload(1, metric("Temp", 201.0, timestamp=1)))
+    c.on_message(TOPIC2, payload(2, metric("Temp", 999.0, timestamp=2)))
+    assert (temp(c).value, temp(c).device) == (201.0, DEVICE)
+    assert (c.get(GROUP, EDGE, MIXER2, "Temp").value, c.get(GROUP, EDGE, MIXER2, "Temp").device) == (999.0, MIXER2)
+
+
+def test_node_data_is_not_a_device_sample():
+    c = cache()
+    c.on_message(NBIRTH, payload(0))
+    c.on_message(f"spBv1.0/{GROUP}/NDATA/{EDGE}", payload(1, metric("Temp", 5.0, timestamp=1)))
+    assert temp(c) is None and c.get(GROUP, EDGE, None, "Temp").value == 5.0
+
+
+def test_a_device_death_drops_only_that_device():
+    c = cache()
+    c.on_message(NBIRTH, payload(0))
+    c.on_message(TOPIC, payload(1, metric("Temp", 201.0, timestamp=1)))
+    c.on_message(TOPIC2, payload(2, metric("Temp", 999.0, timestamp=2)))
+    c.on_message(DDEATH.replace(DEVICE, MIXER2), payload(3))
+    assert temp(c).value == 201.0 and c.get(GROUP, EDGE, MIXER2, "Temp") is None
+
+
+def test_elsewhere_names_the_latest_sample_of_the_metric_under_another_device():
+    c = cache()
+    c.on_message(NBIRTH, payload(0))
+    c.on_message(TOPIC2, payload(1, metric("Temp", 999.0, timestamp=1)))
+    assert c.elsewhere(GROUP, EDGE, DEVICE, "Temp").device == MIXER2
+    c.on_message(TOPIC, payload(2, metric("Temp", 201.0, timestamp=2)))
+    assert c.elsewhere(GROUP, EDGE, MIXER2, "Temp").device == DEVICE
+    assert c.elsewhere(GROUP, EDGE, DEVICE, "Rpm") is None

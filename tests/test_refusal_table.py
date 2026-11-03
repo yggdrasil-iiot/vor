@@ -323,6 +323,15 @@ def test_location_mismatch(tmp_path):
     assert reason(out) == "location-mismatch" and out["verdict"]["evidence"]["expected"] == DEVICE
 
 
+def test_another_device_on_the_edge_does_not_shadow_the_bound_one(tmp_path):
+    w = World(tmp_path)
+    feed(w.cache, w.now)
+    w.cache.on_message(TOPIC.replace(DEVICE, "synthetic-site:line1:mixer2"),
+                       payload(2, metric("Temp", 999.0, timestamp=w.now - 100, server=w.now - 90)))
+    out = w.read()
+    assert out["verdict"]["usable"] and out["answer"]["sample"]["value"] == VALUE
+
+
 def test_location_mismatch_on_node_data(tmp_path):
     w = World(tmp_path)
     feed(w.cache, w.now, device=None)

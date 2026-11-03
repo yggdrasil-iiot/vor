@@ -72,6 +72,7 @@ class Edge:
         if not self.heimdall_jar.exists():
             raise GateFailure(f"missing {self.heimdall_jar} (build Bifrost first)")
         self.identity = work / "edge-pki"
+        self.server_trust = work / "server-trust"  # the sim writes its certificate here; Heimdall trusts only that
         self.policy = work / "command-policy.json"
         self.policy.write_text(json.dumps({"version": "1.0.0", "default": "deny", "rules": [
             {"id": "set-temperature", "principal": "agent",
@@ -91,11 +92,13 @@ class Edge:
         env = {**os.environ, "MQTT_URL": MQTT, "OPCUA_URL": "opc.tcp://localhost:48400", "SPB_GROUP": GROUP,
                "SPB_EDGE": EDGE, "REGISTRY_PATH": str(self.registry), "POLICY_PATH": str(self.policy),
                "COMMAND_LEDGER_PATH": str(self.work / "ledger"), "HEIMDALL_IDENTITY_DIR": str(self.identity),
-               "HEALTH_PORT": "0"}
+               "HEIMDALL_SERVER_TRUST_DIR": str(self.server_trust), "HEALTH_PORT": "0"}
         group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         self.stack.procs.append(subprocess.Popen(["java", "-jar", str(self.heimdall_jar)], env=env,
                                                  stdout=self.log.open("w"), stderr=subprocess.STDOUT, **group))
         wait_for("Heimdall", lambda: log_has(self.log, "[BRIDGE] ready"), 90)
+        if not log_has(self.log, "(1 trusted certificate(s); any other server is refused)"):
+            raise GateFailure("Heimdall did not load the server trust list holding the sim's certificate")
 
     def denied(self, cmd_id: str, reason: str, timeout: float = 30) -> bool:
         line = f"[BRIDGE] DENY cmd=bifrost/command/v1 cmdId={cmd_id} reason={reason}"
@@ -117,14 +120,18 @@ class Edge:
             return False
 
 
-def sim_with_identity(stack: Stack, thumbprint: str) -> Path:
-    """The sim requiring the edge's certificate for the Method; anonymous reads and status writes still work."""
+def sim_with_identity(stack: Stack, thumbprint: str, server_trust: Path) -> Path:
+    """The sim requiring the edge's certificate for the Method; anonymous reads and status writes still work.
+
+    The sim writes the certificate it presents into the edge's server trust list, so Heimdall signs into this sim and
+    no other server at the same URL."""
     import socket
     with socket.socket() as s:
         if s.connect_ex(("127.0.0.1", 48400)) == 0:
             raise GateFailure("port 48400 is already in use (a sim from an earlier run?)")
     log = stack.work / "sim.log"
-    env = {**os.environ, "SIM_REQUIRE_IDENTITY": "on", "SIM_GOVERNED_THUMBPRINT": thumbprint}
+    env = {**os.environ, "SIM_REQUIRE_IDENTITY": "on", "SIM_GOVERNED_THUMBPRINT": thumbprint,
+           "SIM_SERVER_CERT_OUT": str(server_trust / "trusted" / "certs" / "sim-server.der")}
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     stack.procs.append(subprocess.Popen(["java", "-jar", str(stack.sim_jar)], env=env, stdout=log.open("w"),
                                         stderr=subprocess.STDOUT, **group))
@@ -391,7 +398,7 @@ def main() -> int:
         edge = Edge(stack, bifrost, work, registry, 150.0 if a.negative_control else 100.0)
         thumb = edge.thumbprint()
         stack.broker()
-        sim_log = sim_with_identity(stack, thumb)
+        sim_log = sim_with_identity(stack, thumb, edge.server_trust)
         recipes = stack.recipe_registry()
         (work / "trusted-keys.jsonl").write_text(pub.authorized)
         cfg = work / "vor.json"
