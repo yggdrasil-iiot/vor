@@ -2,3 +2,4 @@ equipmentInstanceId,label,equipmentLevel,parent
 synthetic-site,Synthetic site,SITE_1,
 line1,Line 1,PRODUCTIONLINE_5,synthetic-site
 mixer1,Mixer 1,WORKCELL_6,line1
+mixer2,Mixer 2,WORKCELL_6,line1

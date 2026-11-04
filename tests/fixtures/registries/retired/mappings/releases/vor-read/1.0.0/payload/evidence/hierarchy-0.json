@@ -6,7 +6,7 @@
   "origin": "synthetic",
   "file": {
     "path": "data/hierarchy-0.csv",
-    "sha256": "662cd1676fb22eeddb2216d7ad485e2f1677b186b86e1fe9fe3045ff70cded1d",
+    "sha256": "9c66ba69fd4e5917fc1fb7da98412a1f2dddb137321d5e016d424ac5289b0df8",
     "mediaType": "text/csv"
   },
   "capturedAt": "2026-11-01T00:00:00Z",
@@ -14,6 +14,7 @@
   "scope": [
     "synthetic-site",
     "line1",
-    "mixer1"
+    "mixer1",
+    "mixer2"
   ]
 }

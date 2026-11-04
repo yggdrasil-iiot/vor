@@ -4,8 +4,8 @@
   "id": "vor-read-fixture",
   "streamId": "line1",
   "version": "1.0.0",
-  "workspaceSha256": "f6a8549154f9b1ae52609565915a093b5837476c2342dd93743ff05a4dbbb6f1",
-  "proposalSha256": "f6a8549154f9b1ae52609565915a093b5837476c2342dd93743ff05a4dbbb6f1",
+  "workspaceSha256": "e64f492614555eef0df1775c2dd00d76e1b7d3925de596026b4556b74a7ab00c",
+  "proposalSha256": "e64f492614555eef0df1775c2dd00d76e1b7d3925de596026b4556b74a7ab00c",
   "baseRelease": null,
   "proposedBy": "proposer",
   "execution": "excluded",
@@ -22,6 +22,10 @@
       {
         "id": "mixer1",
         "label": "Mixer 1"
+      },
+      {
+        "id": "mixer2",
+        "label": "Mixer 2"
       }
     ],
     "connections": [
@@ -29,6 +33,12 @@
         "id": "sim-opcua",
         "label": "Bifrost OPC-UA sim",
         "equipmentInstanceId": "mixer1",
+        "accessProfileRef": "s7-1500-opcua-v1"
+      },
+      {
+        "id": "sim-opcua-mixer2",
+        "label": "Bifrost OPC-UA sim",
+        "equipmentInstanceId": "mixer2",
         "accessProfileRef": "s7-1500-opcua-v1"
       }
     ]
