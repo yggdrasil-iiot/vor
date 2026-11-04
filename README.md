@@ -101,11 +101,23 @@ Verified live: started after the birth, Vor answered no-sample; after one rebirt
 
 `vor-propose` is a separate command-line tool installed with the package (entry point `vor-propose`, also `python -m vor.propose`). It is the agent's half of the governed write path (M2). The MCP server stays read-only and holds no key; signing is a separate process so that a prompt steering a tool call cannot obtain a signature.
 
-It takes one `read_governed` answer file, as Vor returned it, and writes one command proposal: a DSSE envelope around an in-toto Statement v1 with predicate type `https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v1`, naming one OPC UA Method call with one Double input, signed with the agent's Ed25519 key. Three subjects pin, by raw-byte SHA-256, the stream head file `heads/<stream>.json`, the `release.json` it names, and the evidence. The evidence travels base64 in the predicate, byte for byte, never re-serialized.
+It takes one `read_governed` answer file, as Vor returned it, and writes one command proposal: a DSSE envelope around an in-toto Statement v1 with predicate type `https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v2`, naming one OPC UA Method call with one Double input, signed with the agent's Ed25519 key. It has the same eight predicate fields; Bifrost refuses every v1 statement as `command.malformed`, so no verifier reads a v1 signature under the new meaning. Three subjects pin, by raw-byte SHA-256, the stream head file `heads/<stream>.json`, the `release.json` it names, and the evidence. The evidence travels base64 in the predicate, byte for byte, never re-serialized.
 
 ```sh
 vor-propose <answer.json> --registry <dir> --by <principal> --by-key <file> --approved-by <principal> --group <g> --edge <e> --device <d> --object <nodeId> --method <nodeId> --input <name> --value <v> [--not-before <instant>] [--valid-for <seconds>] [--out-dir proposals]
 ```
+
+In v2, `--group`/`--edge` (`target.group`, `target.edge`) name the command node, where the command is delivered. `--device` (`target.device`) names the governed equipment by the Sparkplug device id its data edge publishes: the ISA-95 path, for example `synthetic-site:line1:mixer1`. The OPC UA object path (`Line1/Mixer1`) appears only in `--object`.
+
+Before signing, `vor-propose` resolves the published command binding (mapping contract 2.25.0) from the pinned release with its own code; no code is shared with Bifrost. The key is (the read binding's `device`, `methodNodeId`) against (`--device`, `--method`). Every file read is checked against the SHA-256 that `release.json` records for it. It then checks that the proposal and its evidence say what the link says:
+- `--device` equals the read binding's device;
+- the evidence's `binding.source` names the released read-binding file and its digest;
+- the evidence binding's group, edge, device, metric and `governedDefinitionRef` equal the read binding's;
+- `pin.field_id` equals its `mappingId` and `pin.file` the mapping set it names;
+- `--group`/`--edge` equal the link's `command`;
+- `--object`, `--method` and `--input` equal the link's Method (one input, type `Double`).
+
+The value stays the command policy's to bound. Bifrost's approval and Heimdall run the same three checks in their own code as `command.link.missing|ambiguous|mismatch`.
 
 `--registry` is the Bifrost registry Vor reads (the directory holding `mappings/`). `--by-key` is a key file as Bifrost writes one (base64 PKCS#8 on one line). Node ids are `nsu=<namespaceUri>;s=<identifier>`. `--not-before` defaults to now; `--valid-for` defaults to 900 seconds and may not exceed 900.
 
@@ -114,7 +126,9 @@ Output is `<out-dir>/<cmdId>.dsse.json` (never overwritten) and a JSON report `{
 It refuses instead of signing (exit 1, JSON `proposal-refusal` with `error`) with these codes:
 - `evidence-malformed`
 - `evidence-unusable` (the answer is a refusal)
-- `binding-mismatch` (the answer reads another group or edge than the target)
+- `link-missing` (no command binding for the device and Method)
+- `link-ambiguous` (more than one)
+- `link-mismatch` (the `detail` names the field that differs, for example `binding.source`, `command`, `method.objectNodeId`)
 - `head-mismatch` (the registry's current head or its `release.json` is not the release the answer pinned)
 - `same-principal`
 - `node-id`
@@ -144,6 +158,8 @@ python scripts/make_fixtures.py [--bifrost ../bifrost]
 ```
 
 This requires <bifrost>/gates/target/bifrost-gates.jar. It writes tests/fixtures/registries/{active,deprecated,retired} and tests/fixtures/trusted-keys.jsonl; private keys are created in a temporary directory and deleted. tests/fixtures is marked -text in .gitattributes so line endings never change hash-pinned bytes.
+
+The fixture registries are regenerated from Bifrost's `vor-read` bundle, which now carries a second mixer (`mixer2`) and two command bindings (`mixer1-set-temperature`, `mixer2-set-temperature`), mapping contract 2.25.0.
 
 ## Gates
 
@@ -180,7 +196,7 @@ The run passes (exit 0) only when all 9 assertions ran and held. A missing jar, 
 
 CI (`.github/workflows/ci.yml`) runs the unit tests on Linux (Python 3.11 and 3.13) and Windows (Python 3.13) and the ASCII product-name check; it does not run the gate, so a red badge means a regression rather than a container that did not come up.
 
-`scripts/propose_crosscheck.py` checks the contract across languages: over a copy of the fixture registry with two fresh keys (`agent`, `operator`) and their command grants, `vor-propose` signs a proposal from a real Vor answer; Bifrost's `gates command verify` accepts it; `gates command approve` co-signs it under a command policy; the approved envelope carries the agent's payload string and signature unchanged; `gates command verify --approved` accepts it; and a copy whose input value was changed after signing is refused `command.signature`. It needs `<bifrost>/gates/target/bifrost-gates.jar` and Java 17+. The run passes (exit 0) only when all 7 assertions ran and held. `--negative-control` expects the tampered copy to be accepted, so it must exit 1. CI does not run it, like the other gate.
+`scripts/propose_crosscheck.py` checks the contract across languages: over a copy of the fixture registry with two fresh keys (`agent`, `operator`) and their command grants, `vor-propose` signs a proposal from a real Vor answer; Bifrost's `gates command verify` accepts it; `gates command approve` co-signs it under a command policy; the approved envelope carries the agent's payload string and signature unchanged; `gates command verify --approved` accepts it; and a copy whose input value was changed after signing is refused `command.signature`. After the tamper check, Mixer1's evidence for Mixer2's Method is refused by `vor-propose` with `link-mismatch`; the same statement signed with the agent's key outside `vor-propose` is refused by `gates command verify` with `command.link.mismatch`. It needs `<bifrost>/gates/target/bifrost-gates.jar` and Java 17+. The run passes (exit 0) only when all 9 assertions ran and held. `--negative-control` expects the tampered copy to be accepted, so it must exit 1. CI does not run it, like the other gate.
 
 ```sh
 python scripts/propose_crosscheck.py
@@ -192,15 +208,16 @@ python scripts/propose_crosscheck.py --negative-control
 - A: for 150.0, approval refuses `command.policy.denied`, and the same proposal co-signed outside approval is refused by Heimdall with `command.policy.denied`;
 - B: `vor-propose` will not sign the bad-quality evidence (`evidence-unusable`); a proposal built around it anyway is refused `command.evidence.unusable` by approval and by Heimdall;
 - D: an approved 50.0 changed to 150.0 in flight is refused `command.signature`;
-- session: after control, A, B and D, the same Vor session still answers usable with no further rebirth, so nothing Heimdall published broke Muninn's sequence; and Heimdall logged the Rebirth request as ignored;
+- E: Mixer1's evidence for Mixer2's Method — `vor-propose` will not sign it (`link-mismatch`); signed with the agent's key anyway, approval refuses `command.link.mismatch`; co-signed outside approval, Heimdall refuses `command.link.mismatch`; the command policy used by the gate allows Mixer2's Method, so policy is not what stops it;
+- session: after control, A, B, D and E, the same Vor session still answers usable with no further rebirth, so nothing Heimdall published broke Muninn's sequence; and Heimdall logged the Rebirth request as ignored;
 - C: after `vor-read` 1.0.1 is published on the stream, an approved proposal for 48.0 is refused `command.head.mismatch`;
-- finally, the sim never transferred 150.0 or 48.0.
+- finally, the sim never transferred 150.0 or 48.0, and transferred nothing to Mixer2.
 
 The gate's own OPC UA client write to the sim's status node is retried up to three times on a fresh session, and every retry is printed; the write failed in 2 of 7 early runs.
 
 Requirements: Docker, Java 17+, `<bifrost>/{gates,sim,heimdall}/target/*.jar`, `<muninn>/target/muninn.jar`, the `gate` extra.
 
-The run passes (exit 0) only when all 14 assertions ran and held.
+The run passes (exit 0) only when all 17 assertions ran and held.
 
 `--negative-control` raises the policy ceiling to 150.0, so approval accepts 150.0 and the run must exit 1.
 

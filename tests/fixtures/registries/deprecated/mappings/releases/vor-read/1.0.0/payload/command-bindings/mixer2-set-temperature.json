@@ -1,0 +1,39 @@
+{
+  "kind": "command-binding",
+  "schemaVersion": "2.25.0",
+  "id": "mixer2-set-temperature",
+  "version": "1.0.0",
+  "equipmentRef": {
+    "id": "vor-plant",
+    "version": "1.0.0",
+    "equipmentInstanceId": "mixer2"
+  },
+  "readBindingRef": {
+    "id": "vor-binding-mixer2-temp",
+    "version": "1.0.0"
+  },
+  "command": {
+    "group": "Bifrost:Line1",
+    "edge": "recipe-edge"
+  },
+  "method": {
+    "objectNodeId": "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2",
+    "methodNodeId": "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2.SetTemperature",
+    "inputs": [
+      {
+        "name": "targetTemperature",
+        "type": "Double",
+        "unit": "Cel"
+      }
+    ]
+  },
+  "evidenceRefs": [
+    {
+      "artifactId": "manual-mixer2-temp",
+      "locator": {
+        "kind": "text-line",
+        "line": 2
+      }
+    }
+  ]
+}

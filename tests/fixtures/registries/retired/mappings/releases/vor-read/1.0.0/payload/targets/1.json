@@ -1,0 +1,21 @@
+{
+  "kind": "target-instance",
+  "schemaVersion": "2.0.0",
+  "id": "mixer2",
+  "version": "1.0.0",
+  "equipmentInstanceId": "mixer2",
+  "label": "Mixer 2",
+  "semanticDefinitionRef": {
+    "id": "mixer-model",
+    "version": "1.0.0"
+  },
+  "evidenceRefs": [
+    {
+      "artifactId": "manual-mixer2-temp",
+      "locator": {
+        "kind": "text-line",
+        "line": 1
+      }
+    }
+  ]
+}

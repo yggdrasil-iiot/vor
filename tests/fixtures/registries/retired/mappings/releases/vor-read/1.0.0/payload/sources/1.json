@@ -1,0 +1,39 @@
+{
+  "kind": "source-definition",
+  "schemaVersion": "2.7.0",
+  "id": "mixer2-temp",
+  "version": "1.0.0",
+  "equipmentInstanceId": "mixer2",
+  "connectionProfileRef": "sim-opcua-mixer2",
+  "accessProfileRef": "s7-1500-opcua-v1",
+  "status": "ready",
+  "rawAddressText": "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2.Temp",
+  "addressRadix": null,
+  "access": {
+    "kind": "opcua-node",
+    "namespaceUri": "urn:bifrost:opcua:sim",
+    "identifierType": "string",
+    "identifier": "Line1/Mixer2.Temp"
+  },
+  "rawRepresentation": {
+    "mode": "typed",
+    "valueType": "Float64"
+  },
+  "inputStage": "already-engineered",
+  "unit": {
+    "status": "known",
+    "code": "Cel"
+  },
+  "evidenceRefs": [
+    {
+      "artifactId": "manual-mixer2-temp",
+      "locator": {
+        "kind": "text-line",
+        "line": 1
+      }
+    }
+  ],
+  "viewOf": null,
+  "sourceKind": "plc",
+  "accessMode": "read"
+}

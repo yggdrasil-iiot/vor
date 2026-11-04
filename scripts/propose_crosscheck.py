@@ -4,8 +4,9 @@
 Over a copy of the fixture registry with two fresh keys (the agent and the operator) and their command grants:
 vor-propose signs a proposal from a real Vor answer; ``gates command verify`` accepts it; ``gates command approve``
 co-signs it under a command policy; the approved envelope carries the agent's payload string and signature unchanged;
-``gates command verify --approved`` accepts it; and a copy whose input value was changed after signing is refused
-``command.signature``.
+``gates command verify --approved`` accepts it; a copy whose input value was changed after signing is refused
+``command.signature``; and Mixer1's evidence for Mixer2's Method is refused by vor-propose (``link-mismatch``) and,
+signed by the agent's key outside vor-propose, by ``gates command verify`` (``command.link.mismatch``).
 
     python scripts/propose_crosscheck.py [--bifrost ../bifrost] [--negative-control]
 
@@ -32,13 +33,18 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 
-from helpers import BINDING, FIXTURES, TOPIC, fixture_now, metric, payload  # noqa: E402
+from helpers import BINDING, DEVICE, FIXTURES, TOPIC, fixture_now, metric, payload  # noqa: E402
+from vor.head import IN_TOTO, pae  # noqa: E402
+from vor.propose import load_key  # noqa: E402
 from vor.server import Question, Vor  # noqa: E402
 from vor.stream import SampleCache  # noqa: E402
 
 OBJECT = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer1"
 METHOD = OBJECT + ".SetTemperature"
-CHECKS = 7
+OBJECT2 = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2"
+METHOD2 = OBJECT2 + ".SetTemperature"
+DEVICE2 = "synthetic-site:line1:mixer2"
+CHECKS = 9
 
 
 class Check:
@@ -85,7 +91,7 @@ def grants(reg: Path) -> None:
 def command_policy(path: Path) -> None:
     path.write_text(json.dumps({"version": "1.0.0", "default": "deny", "rules": [
         {"id": "set-temperature", "principal": "agent",
-         "target": {"group": "Bifrost:Line1", "edge": "recipe-edge", "device": "Line1/Mixer1"},
+         "target": {"group": "Bifrost:Line1", "edge": "recipe-edge", "device": DEVICE},
          "command": METHOD, "constraint": {"type": "Double", "min": 0.0, "max": 100.0}}]}), encoding="utf-8")
 
 
@@ -105,6 +111,17 @@ def tamper(envelope: dict) -> dict:
     s["predicate"]["method"]["inputs"][0]["value"] = 43.0
     body = json.dumps(s, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return dict(envelope, payload=base64.b64encode(body).decode("ascii"))
+
+
+def other_equipment(envelope: dict, key_file: Path) -> dict:
+    """The agent's own statement re-aimed at Mixer2's Method with Mixer1's evidence, signed with the agent's key."""
+    s = json.loads(base64.b64decode(envelope["payload"]))
+    s["predicate"]["target"]["device"] = DEVICE2
+    s["predicate"]["method"].update(objectNodeId=OBJECT2, methodNodeId=METHOD2)
+    body = json.dumps(s, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    sig = load_key(key_file).sign(pae(IN_TOTO, body))
+    return dict(envelope, payload=base64.b64encode(body).decode("ascii"),
+                signatures=[{"keyid": "agent", "sig": base64.b64encode(sig).decode("ascii")}])
 
 
 def main() -> int:
@@ -132,7 +149,7 @@ def main() -> int:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = subprocess.run([sys.executable, "-m", "vor.propose", str(answer), "--registry", str(reg),
                             "--by", "agent", "--by-key", str(work / "keys" / "agent.key"), "--approved-by", "operator",
-                            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", "Line1/Mixer1",
+                            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE,
                             "--object", OBJECT, "--method", METHOD, "--input", "targetTemperature", "--value", "42",
                             "--not-before", now, "--valid-for", "600", "--out-dir", str(work / "proposals")],
                            capture_output=True, text=True)
@@ -166,6 +183,22 @@ def main() -> int:
         else:
             check.that(code == 1 and rep.get("error") == "command.signature",
                        f"a value changed after signing is refused command.signature ({rep.get('error')})")
+
+        r = subprocess.run([sys.executable, "-m", "vor.propose", str(answer), "--registry", str(reg),
+                            "--by", "agent", "--by-key", str(work / "keys" / "agent.key"), "--approved-by", "operator",
+                            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE2,
+                            "--object", OBJECT2, "--method", METHOD2, "--input", "targetTemperature", "--value", "42",
+                            "--not-before", now, "--valid-for", "600", "--out-dir", str(work / "proposals")],
+                           capture_output=True, text=True)
+        refused = json.loads(r.stdout) if r.stdout.strip() else {}
+        check.that(r.returncode == 1 and refused.get("error") == "link-mismatch",
+                   f"vor-propose refuses Mixer1 evidence for Mixer2's Method ({refused.get('error')})")
+
+        aimed = work / "proposals" / "mixer2.dsse.json"
+        aimed.write_text(json.dumps(other_equipment(mine, work / "keys" / "agent.key")), encoding="utf-8")
+        code, rep = gates(jar, "verify", str(reg), str(aimed))
+        check.that(code == 1 and rep.get("error") == "command.link.mismatch",
+                   f"signed outside vor-propose, gates command verify refuses it command.link.mismatch ({rep.get('error')})")
 
         check.that(check.ran == CHECKS - 1, f"all {CHECKS - 1} assertions ran before this one")
     print(f"[CHECK] PASS propose_crosscheck ({check.ran} assertions)", flush=True)

@@ -10,7 +10,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
-from helpers import FIXTURES, fixture_now, metric, payload, sha, TOPIC, BINDING
+from helpers import (BINDING, DEVICE, FIXTURES, TOPIC, Keys, edit_json, fixture_now, metric, payload, republish, sha,
+                     sign_head)
 from vor.head import IN_TOTO, pae
 from vor.propose import PREDICATE, ProposalRefused, main, propose
 from vor.server import Question, Vor
@@ -19,15 +20,18 @@ from vor.stream import SampleCache
 REGISTRY = FIXTURES / "registries" / "active"
 OBJECT = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer1"
 METHOD = OBJECT + ".SetTemperature"
+OBJECT2 = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2"
+METHOD2 = OBJECT2 + ".SetTemperature"
+DEVICE2 = "synthetic-site:line1:mixer2"
 # Bifrost CommandProposal.parse: exactly these predicate fields.
 FIELDS = {"cmdId", "streamId", "target", "method", "validity", "proposedBy", "approvedBy", "evidence"}
 
 
-def evidence(tmp_path, quality_bad=False) -> bytes:
+def evidence(tmp_path, quality_bad=False, registry=REGISTRY, trusted=FIXTURES / "trusted-keys.jsonl") -> bytes:
     cache = SampleCache(clock_ms=lambda: 0)
-    vor = Vor(REGISTRY, FIXTURES / "trusted-keys.jsonl", tmp_path / "state",
+    vor = Vor(registry, trusted, tmp_path / "state",
               {"mixer1-temp": Question("mixer1-temp", "line1", BINDING, "")}, cache)
-    now = fixture_now(REGISTRY / "mappings")
+    now = fixture_now(registry / "mappings")
     cache.on_message("spBv1.0/Bifrost:Line1/NBIRTH/recipe-edge", payload(0))
     bad = {"status": 0x808B0000, "quality": 0} if quality_bad else {}
     cache.on_message(TOPIC, payload(1, metric("Temp", 21.5, timestamp=now - 100, server=now - 90, **bad)))
@@ -37,7 +41,7 @@ def evidence(tmp_path, quality_bad=False) -> bytes:
 
 def args(**over):
     a = dict(proposed_by="agent", key=Ed25519PrivateKey.generate(), approved_by="operator", group="Bifrost:Line1",
-             edge="recipe-edge", device="Line1/Mixer1", object_node_id=OBJECT, method_node_id=METHOD,
+             edge="recipe-edge", device=DEVICE, object_node_id=OBJECT, method_node_id=METHOD,
              input_name="targetTemperature", value=42.0, not_before="2026-11-02T10:00:00Z",
              not_after="2026-11-02T10:15:00Z")
     a.update(over)
@@ -93,7 +97,6 @@ def test_the_same_inputs_sign_the_same_bytes(tmp_path):
     ({"value": float("nan")}, "input"),
     ({"value": float("inf")}, "input"),
     ({"method_node_id": "ns=2;s=Line1/Mixer1.SetTemperature"}, "node-id"),
-    ({"edge": "other-edge"}, "binding-mismatch"),
     ({"device": ""}, "target"),
 ])
 def test_refuses_what_bifrost_would_refuse(tmp_path, over, code):
@@ -154,7 +157,7 @@ def key_file(tmp_path):
 
 def cli(tmp_path, ev_path, key_path, *extra):
     return ["--registry", str(REGISTRY), "--by", "agent", "--by-key", str(key_path), "--approved-by", "operator",
-            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", "Line1/Mixer1", "--object", OBJECT,
+            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE, "--object", OBJECT,
             "--method", METHOD, "--input", "targetTemperature", "--value", "42", "--out-dir",
             str(tmp_path / "proposals"), str(ev_path), *extra]
 
@@ -190,3 +193,120 @@ def test_cli_refuses_a_key_that_is_not_ed25519_pkcs8(tmp_path, capsys):
     bad.write_text("bm90IGEga2V5\n", encoding="utf-8")
     assert main(cli(tmp_path, ev_path, bad)) == 1
     assert json.loads(capsys.readouterr().out)["error"] == "key"
+
+
+# --- the published command link (contract 2.25.0, proposal v2) -----------------------------------------------------
+
+def test_the_predicate_is_v2_and_target_device_is_the_equipment_device_id(tmp_path):
+    _, envelope = propose(evidence(tmp_path), REGISTRY, **args())
+    p = decode(envelope)[2]
+    assert decode(envelope)[2]["predicateType"].endswith("/command-proposal/v2")
+    assert p["predicate"]["target"] == {"group": "Bifrost:Line1", "edge": "recipe-edge", "device": DEVICE}
+
+
+def test_mixer2_proposal_signs_against_mixer2_link_with_mixer2_evidence_only(tmp_path):
+    """Mixer1's evidence for Mixer2's Method: the key finds Mixer2's link, whose read binding is not the evidence's."""
+    with pytest.raises(ProposalRefused) as r:
+        propose(evidence(tmp_path), REGISTRY, **args(device=DEVICE2, object_node_id=OBJECT2, method_node_id=METHOD2))
+    assert (r.value.code, r.value.detail) == ("link-mismatch", "binding.source")
+
+
+@pytest.mark.parametrize("over, code, detail", [
+    ({"device": "Line1/Mixer1"}, "link-missing", "device+methodNodeId"),
+    ({"method_node_id": METHOD2}, "link-missing", "device+methodNodeId"),
+    ({"device": DEVICE2}, "link-missing", "device+methodNodeId"),
+    ({"edge": "other-edge"}, "link-mismatch", "command"),
+    ({"group": "Bifrost:Line2"}, "link-mismatch", "command"),
+    ({"object_node_id": OBJECT2}, "link-mismatch", "method.objectNodeId"),
+    ({"input_name": "setpoint"}, "link-mismatch", "method.inputs"),
+])
+def test_refuses_a_call_the_link_does_not_name(tmp_path, over, code, detail):
+    with pytest.raises(ProposalRefused) as r:
+        propose(evidence(tmp_path), REGISTRY, **args(**over))
+    assert (r.value.code, r.value.detail) == (code, detail)
+
+
+def _answer_edit(ev: bytes, change) -> bytes:
+    doc = json.loads(ev)
+    change(doc["answer"])
+    return json.dumps(doc, indent=1).encode("utf-8") + b"\n"
+
+
+@pytest.mark.parametrize("change, detail", [
+    (lambda a: a["binding"]["source"].__setitem__("sha256", "0" * 64), "binding.source"),
+    (lambda a: a["binding"]["source"].__setitem__("file", "mappings/elsewhere.json"), "binding.source"),
+    (lambda a: a["binding"].__setitem__("metric", "Speed"), "binding.metric"),
+    (lambda a: a["binding"].__setitem__("device", DEVICE2), "binding.device"),
+    (lambda a: a["binding"]["governedDefinitionRef"].__setitem__("version", "9.9.9"), "binding.governedDefinitionRef"),
+    (lambda a: a["pin"].__setitem__("field_id", "temp-mixer2"), "pin.field_id"),
+    (lambda a: a["pin"].__setitem__("file", "payload/mappings/1.json"), "pin.file"),
+])
+def test_refuses_evidence_not_bound_to_the_released_read_binding(tmp_path, change, detail):
+    with pytest.raises(ProposalRefused) as r:
+        propose(_answer_edit(evidence(tmp_path), change), REGISTRY, **args())
+    assert (r.value.code, r.value.detail) == ("link-mismatch", detail)
+
+
+def _registry(tmp_path):
+    reg = tmp_path / "reg"
+    shutil.copytree(REGISTRY, reg)
+    return reg, reg / "mappings" / "releases" / "vor-read" / "1.0.0"
+
+
+def test_refuses_a_link_file_whose_bytes_differ_from_release_json(tmp_path):
+    ev = evidence(tmp_path)
+    reg, root = _registry(tmp_path)
+    link = root / "payload" / "command-bindings" / "mixer2-set-temperature.json"
+    link.write_bytes(link.read_bytes() + b" ")
+    with pytest.raises(ProposalRefused) as r:
+        propose(ev, reg, **args())
+    assert (r.value.code, r.value.detail) == ("link-mismatch", "release-file")
+
+
+def _republished(tmp_path, change):
+    """A release changed and published again under this test's keys, and an answer read under its new head."""
+    reg, root = _registry(tmp_path)
+    keys = Keys("proposer", "approver")
+    trusted = keys.trusted(tmp_path / "trusted.jsonl")
+    for head in (reg / "mappings" / "heads").glob("*.json"):
+        sign_head(reg / "mappings", head.stem, keys)
+    change(root)
+    republish(reg / "mappings", "line1", keys)
+    return reg, evidence(tmp_path, registry=reg, trusted=trusted)
+
+
+def _add_link(root, name: str, doc: dict) -> None:
+    rel = f"command-bindings/{name}.json"
+    (root / "payload" / rel).write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
+    edit_json(root / "payload" / "proposal.json", lambda p: p["files"].append(
+        {"path": rel, "kind": "command-binding", "id": doc["id"], "version": doc["version"], "sha256": ""}))
+    edit_json(root / "release.json", lambda r: r["files"].append({"path": "payload/" + rel, "sha256": ""}))
+
+
+def test_refuses_two_links_for_one_device_and_method(tmp_path):
+    """Bifrost refuses this at publish (command-binding.duplicate); a release that carries it anyway is not signed."""
+    def twin(root):
+        doc = json.loads((root / "payload" / "command-bindings" / "mixer1-set-temperature.json").read_bytes())
+        _add_link(root, "mixer1-twin", dict(doc, id="mixer1-twin"))
+    reg, ev = _republished(tmp_path, twin)
+    with pytest.raises(ProposalRefused) as r:
+        propose(ev, reg, **args())
+    assert (r.value.code, r.value.detail) == ("link-ambiguous", "device+methodNodeId")
+
+
+def test_refuses_a_link_whose_read_binding_is_not_in_the_release(tmp_path):
+    def dangling(root):
+        doc = json.loads((root / "payload" / "command-bindings" / "mixer2-set-temperature.json").read_bytes())
+        doc["readBindingRef"] = {"id": "vor-binding-mixer3-temp", "version": "1.0.0"}
+        _add_link(root, "mixer3", dict(doc, id="mixer3-set-temperature"))
+    reg, ev = _republished(tmp_path, dangling)
+    with pytest.raises(ProposalRefused) as r:
+        propose(ev, reg, **args())
+    assert (r.value.code, r.value.detail) == ("link-mismatch", "readBindingRef")
+
+
+def test_a_republished_release_still_signs_the_honest_call(tmp_path):
+    """Control for the two tests above: the republishing alone does not make the honest proposal fail."""
+    reg, ev = _republished(tmp_path, lambda root: None)
+    _, envelope = propose(ev, reg, **args())
+    assert decode(envelope)[2]["predicate"]["target"]["device"] == DEVICE

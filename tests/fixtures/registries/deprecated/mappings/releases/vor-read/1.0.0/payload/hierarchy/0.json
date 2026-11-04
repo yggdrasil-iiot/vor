@@ -50,6 +50,21 @@
           }
         }
       ]
+    },
+    {
+      "equipmentInstanceId": "mixer2",
+      "label": "Mixer 2",
+      "equipmentLevel": "WORKCELL_6",
+      "parentEquipmentInstanceId": "line1",
+      "evidenceRefs": [
+        {
+          "artifactId": "hierarchy-plant-register",
+          "locator": {
+            "kind": "text-line",
+            "line": 5
+          }
+        }
+      ]
     }
   ],
   "evidenceRefs": []

@@ -1,0 +1,21 @@
+{
+  "profileVersion": "0.1.0",
+  "streamId": "line1",
+  "mappingSetRef": {
+    "id": "mixer2-mapping",
+    "version": "1.0.0"
+  },
+  "mappingId": "temp-mixer2",
+  "equipmentInstanceId": "mixer2",
+  "semanticId": "urn:bifrost:sem:Mixer/Temp",
+  "group": "Bifrost:Line1",
+  "edge": "recipe-edge",
+  "device": "synthetic-site:line1:mixer2",
+  "metric": "Temp",
+  "governedDefinitionRef": {
+    "templateRef": "Line1-Mixer",
+    "version": "1.0.0",
+    "sha256": "a3025cc23ea4c8d584a693d21c84b63a92bc4523dd6a31383c973df4dfa60e2b"
+  },
+  "projection": "identity"
+}

@@ -3,10 +3,14 @@ proposal that names one OPC UA Method call, and signs it with the agent's own ke
 named approver co-signs the same bytes with ``gates command approve`` and Heimdall re-checks everything at the edge.
 
 The proposal is a DSSE v1 envelope around an in-toto Statement v1 whose predicate is Bifrost's
-``command-proposal/v1``. Its three subjects pin, by raw-byte SHA-256, the stream head file, the release.json it names
+``command-proposal/v2``. Its three subjects pin, by raw-byte SHA-256, the stream head file, the release.json it names
 and the evidence: the answer exactly as Vor returned it, carried base64 so no re-serialization can change a byte.
 This is a separate process from the MCP server on purpose: the server holds no key, so a prompt that steers a tool
 call cannot obtain a signature.
+
+``target.group`` and ``target.edge`` name the command node; ``target.device`` names the governed equipment by the
+Sparkplug device id its data edge publishes (the ISA-95 path, for example ``synthetic-site:line1:mixer1``). The call
+must be the one the pinned release's command binding links to the evidence's read binding (``vor.link``).
 
     vor-propose <evidence.json> --registry <dir> --by <principal> --by-key <file> --approved-by <principal>
                 --group <g> --edge <e> --device <d> --object <nodeId> --method <nodeId>
@@ -33,9 +37,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
 
 from .head import IN_TOTO, STATEMENT, STREAM, instant, pae
+from .link import LinkRefused, match, resolve
 from .refusal import sha256
 
-PREDICATE = "https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v1"
+PREDICATE = "https://github.com/yggdrasil-iiot/bifrost/attestation/command-proposal/v2"
 MAX_WINDOW = timedelta(minutes=15)
 NODE_ID = re.compile(r"nsu=[^;]+;s=.+")
 
@@ -81,10 +86,6 @@ def propose(evidence: bytes, registry: Path, *, proposed_by: str, key: Ed25519Pr
     if not isinstance(stream, str) or not STREAM.fullmatch(stream):
         raise ProposalRefused("evidence-malformed", "pin.stream_id")
 
-    binding = answer.get("binding") if isinstance(answer.get("binding"), dict) else {}
-    if binding.get("group") != group or binding.get("edge") != edge:
-        raise ProposalRefused("binding-mismatch", f"evidence reads {binding.get('group')}/{binding.get('edge')}")
-
     # The head this registry serves now must be the one the evidence was read under; a proposal bound to anything
     # else is refused by approval and by the edge, so it is not signed here either.
     head_bytes = _read(registry / "mappings" / "heads" / f"{stream}.json")
@@ -117,6 +118,15 @@ def propose(evidence: bytes, registry: Path, *, proposed_by: str, key: Ed25519Pr
     for part in (group, edge, device):
         if not part:
             raise ProposalRefused("target", "group, edge and device are required")
+
+    # Evidence read from one equipment authorizes a Method of that equipment only: the published link says which.
+    root = f"releases/{head['id']}/{head['version']}"
+    try:
+        link = resolve(registry / "mappings", root, device, method_node_id)
+        match(root, link, answer, group=group, edge=edge, device=device, object_node_id=object_node_id,
+              method_node_id=method_node_id, input_name=input_name)
+    except LinkRefused as r:
+        raise ProposalRefused(r.code, r.detail) from r
 
     cmd_id = cmd_id or str(uuid.uuid4())
     statement = {
@@ -160,9 +170,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--by", required=True, help="the proposing agent's principal")
     ap.add_argument("--by-key", type=Path, required=True, help="the agent's key file (base64 PKCS#8)")
     ap.add_argument("--approved-by", required=True, help="the principal who must co-sign")
-    ap.add_argument("--group", required=True)
-    ap.add_argument("--edge", required=True)
-    ap.add_argument("--device", required=True)
+    ap.add_argument("--group", required=True, help="the command node's Sparkplug group")
+    ap.add_argument("--edge", required=True, help="the command node's Sparkplug edge id")
+    ap.add_argument("--device", required=True, help="the equipment's Sparkplug device id (its ISA-95 path)")
     ap.add_argument("--object", required=True, help="objectNodeId, nsu=<uri>;s=<id>")
     ap.add_argument("--method", required=True, help="methodNodeId, nsu=<uri>;s=<id>")
     ap.add_argument("--input", required=True, help="the input argument's name")

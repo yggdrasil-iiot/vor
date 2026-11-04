@@ -1,0 +1,17 @@
+{
+  "kind": "evidence-artifact",
+  "schemaVersion": "1.1.0",
+  "id": "vor-binding-mixer2-temp",
+  "version": "1.0.0",
+  "origin": "synthetic",
+  "file": {
+    "path": "data/vor-read-binding-mixer2.json",
+    "sha256": "131d5f432cbf652e09bad1c33369c5b4662ad16fca985177349111c894657c09",
+    "mediaType": "application/json"
+  },
+  "capturedAt": "2026-11-01T00:00:00Z",
+  "product": null,
+  "scope": [
+    "mixer2"
+  ]
+}
