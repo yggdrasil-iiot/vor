@@ -20,6 +20,7 @@ from vor.stream import SampleCache
 REGISTRY = FIXTURES / "registries" / "active"
 OBJECT = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer1"
 METHOD = OBJECT + ".SetTemperature"
+CMD_EDGE = "recipe-edge-cmd"  # the command node the published link names; the evidence comes from recipe-edge
 OBJECT2 = "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2"
 METHOD2 = OBJECT2 + ".SetTemperature"
 DEVICE2 = "synthetic-site:line1:mixer2"
@@ -41,7 +42,7 @@ def evidence(tmp_path, quality_bad=False, registry=REGISTRY, trusted=FIXTURES / 
 
 def args(**over):
     a = dict(proposed_by="agent", key=Ed25519PrivateKey.generate(), approved_by="operator", group="Bifrost:Line1",
-             edge="recipe-edge", device=DEVICE, object_node_id=OBJECT, method_node_id=METHOD,
+             edge=CMD_EDGE, device=DEVICE, object_node_id=OBJECT, method_node_id=METHOD,
              input_name="targetTemperature", value=42.0, not_before="2026-11-02T10:00:00Z",
              not_after="2026-11-02T10:15:00Z")
     a.update(over)
@@ -157,7 +158,7 @@ def key_file(tmp_path):
 
 def cli(tmp_path, ev_path, key_path, *extra):
     return ["--registry", str(REGISTRY), "--by", "agent", "--by-key", str(key_path), "--approved-by", "operator",
-            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE, "--object", OBJECT,
+            "--group", "Bifrost:Line1", "--edge", CMD_EDGE, "--device", DEVICE, "--object", OBJECT,
             "--method", METHOD, "--input", "targetTemperature", "--value", "42", "--out-dir",
             str(tmp_path / "proposals"), str(ev_path), *extra]
 
@@ -201,7 +202,7 @@ def test_the_predicate_is_v2_and_target_device_is_the_equipment_device_id(tmp_pa
     _, envelope = propose(evidence(tmp_path), REGISTRY, **args())
     p = decode(envelope)[2]
     assert decode(envelope)[2]["predicateType"].endswith("/command-proposal/v2")
-    assert p["predicate"]["target"] == {"group": "Bifrost:Line1", "edge": "recipe-edge", "device": DEVICE}
+    assert p["predicate"]["target"] == {"group": "Bifrost:Line1", "edge": CMD_EDGE, "device": DEVICE}
 
 
 def test_mixer2_proposal_signs_against_mixer2_link_with_mixer2_evidence_only(tmp_path):

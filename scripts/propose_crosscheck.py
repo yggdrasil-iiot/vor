@@ -91,7 +91,7 @@ def grants(reg: Path) -> None:
 def command_policy(path: Path) -> None:
     path.write_text(json.dumps({"version": "1.0.0", "default": "deny", "rules": [
         {"id": "set-temperature", "principal": "agent",
-         "target": {"group": "Bifrost:Line1", "edge": "recipe-edge", "device": DEVICE},
+         "target": {"group": "Bifrost:Line1", "edge": "recipe-edge-cmd", "device": DEVICE},
          "command": METHOD, "constraint": {"type": "Double", "min": 0.0, "max": 100.0}}]}), encoding="utf-8")
 
 
@@ -149,7 +149,7 @@ def main() -> int:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = subprocess.run([sys.executable, "-m", "vor.propose", str(answer), "--registry", str(reg),
                             "--by", "agent", "--by-key", str(work / "keys" / "agent.key"), "--approved-by", "operator",
-                            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE,
+                            "--group", "Bifrost:Line1", "--edge", "recipe-edge-cmd", "--device", DEVICE,
                             "--object", OBJECT, "--method", METHOD, "--input", "targetTemperature", "--value", "42",
                             "--not-before", now, "--valid-for", "600", "--out-dir", str(work / "proposals")],
                            capture_output=True, text=True)
@@ -186,7 +186,7 @@ def main() -> int:
 
         r = subprocess.run([sys.executable, "-m", "vor.propose", str(answer), "--registry", str(reg),
                             "--by", "agent", "--by-key", str(work / "keys" / "agent.key"), "--approved-by", "operator",
-                            "--group", "Bifrost:Line1", "--edge", "recipe-edge", "--device", DEVICE2,
+                            "--group", "Bifrost:Line1", "--edge", "recipe-edge-cmd", "--device", DEVICE2,
                             "--object", OBJECT2, "--method", METHOD2, "--input", "targetTemperature", "--value", "42",
                             "--not-before", now, "--valid-for", "600", "--out-dir", str(work / "proposals")],
                            capture_output=True, text=True)

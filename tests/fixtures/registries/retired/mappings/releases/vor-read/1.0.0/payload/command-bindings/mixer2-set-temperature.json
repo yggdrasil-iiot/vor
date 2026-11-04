@@ -14,7 +14,7 @@
   },
   "command": {
     "group": "Bifrost:Line1",
-    "edge": "recipe-edge"
+    "edge": "recipe-edge-cmd"
   },
   "method": {
     "objectNodeId": "nsu=urn:bifrost:opcua:sim;s=Line1/Mixer2",
