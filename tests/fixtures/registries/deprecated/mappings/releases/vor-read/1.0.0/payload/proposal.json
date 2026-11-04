@@ -101,14 +101,14 @@
       "kind": "command-binding",
       "id": "mixer1-set-temperature",
       "version": "1.0.0",
-      "sha256": "15dcf16ef2cb646b93fa90b0aa5da0572c40319a8ee3f6c7be23307eed41d136"
+      "sha256": "29cdc3fb43d854ac952d20b9ea1adfd83886782d3f68db681b4d5a768ad0eeb2"
     },
     {
       "path": "command-bindings/mixer2-set-temperature.json",
       "kind": "command-binding",
       "id": "mixer2-set-temperature",
       "version": "1.0.0",
-      "sha256": "a4e44bc5636395240477747d3c4a94270abf0f252736575d995c30210a28d86c"
+      "sha256": "56675ab6beecac8ea29acedea6ef97389652f7c184323748ebd50e3a882251e6"
     }
   ]
 }
