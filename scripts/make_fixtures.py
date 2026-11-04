@@ -111,7 +111,8 @@ class Publisher:
 
     def registry(self, r: Path) -> Path:
         (r / "identity").mkdir(parents=True)
-        (r / "identity" / "authorized-keys.jsonl").write_text(self.authorized)
+        (r / "identity" / "authorized-keys.jsonl").write_text(self.authorized, newline="
+")
         dump(r / "identity" / "activation-policy.json", policy(["line1", "semantics"]))
         bundle = self.work / f"{r.name}-vor-read"
         shutil.copytree(self.source, bundle)
@@ -153,7 +154,8 @@ def main() -> None:
         target.mkdir(parents=True)
         for name, r in built.items():
             shutil.copytree(r, target / name, ignore=shutil.ignore_patterns(".lock"))
-        (OUT / "trusted-keys.jsonl").write_text(pub.authorized)
+        (OUT / "trusted-keys.jsonl").write_text(pub.authorized, newline="
+")
     print(f"wrote {target} and {OUT / 'trusted-keys.jsonl'}")
 
 
