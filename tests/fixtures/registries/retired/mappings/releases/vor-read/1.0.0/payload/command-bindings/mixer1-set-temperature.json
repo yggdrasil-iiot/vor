@@ -1,6 +1,6 @@
 {
   "kind": "command-binding",
-  "schemaVersion": "2.25.0",
+  "schemaVersion": "2.26.0",
   "id": "mixer1-set-temperature",
   "version": "1.0.0",
   "equipmentRef": {
@@ -24,6 +24,18 @@
         "name": "targetTemperature",
         "type": "Double",
         "unit": "Cel"
+      }
+    ]
+  },
+  "endpointRef": {
+    "applicationUri": "urn:bifrost:opcua:sim-server",
+    "certificates": [
+      {
+        "thumbprintSha1": "f1b10d79fbe4ee83c978761ebc506bec9a123c5c",
+        "certificateRef": {
+          "id": "server-certificate-sim",
+          "version": "1.0.0"
+        }
       }
     ]
   },

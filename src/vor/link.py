@@ -1,10 +1,14 @@
-"""The published command binding a proposal must name (mapping contract 2.25.0): the release's one link whose read
+"""The published command binding a proposal must name (mapping contract 2.26.0): the release's one link whose read
 binding's device is the proposal's ``target.device`` and whose Method is the proposal's ``methodNodeId``.
 
 Vor resolves the link from the pinned release on its own, as Bifrost's approval and Heimdall each do in theirs: no
 code is shared, only the published bytes. Every file it reads is checked against the digest release.json records for
 it. No link for the key is ``link-missing``, more than one ``link-ambiguous``, and a link the proposal or its evidence
 does not agree with ``link-mismatch``, with the differing field as the detail.
+
+The link must name the OPC UA server it may reach (``endpointRef``). Vor checks that it is there and well formed and
+that each certificate it lists is a ``server-certificate-`` evidence artifact of the release whose DER file the
+release pins; it does not parse the certificate or contact the server. Bifrost's approval and Heimdall check the DER.
 """
 
 from __future__ import annotations
@@ -21,6 +25,11 @@ KIND = "command-binding"
 PROFILE_FIELDS = {"profileVersion", "streamId", "mappingSetRef", "mappingId", "equipmentInstanceId", "semanticId",
                   "group", "edge", "device", "metric", "governedDefinitionRef", "projection"}
 SHA = re.compile(r"[0-9a-f]{64}")
+SHA1 = re.compile(r"[0-9a-f]{40}")
+ID = re.compile(r"[a-z][a-z0-9._/-]*")
+VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+CONTRACT = "2.26.0"
+CERTIFICATE = ("server-certificate-", "application/pkix-cert")
 
 
 class LinkRefused(Exception):
@@ -131,6 +140,7 @@ def resolve(mappings: Path, root: str, device: str, method_node_id: str) -> Link
             raise LinkRefused("link-mismatch", "binding.mappingSetRef")
         if len(inputs) != 1:
             raise LinkRefused("link-mismatch", "method.inputs")
+        _endpoint(r, link, evidence)
         hits.append(Link(_text(link, "id"), _text(link, "version"), _text(link, "command", "group"),
                          _text(link, "command", "edge"), _text(m, "objectNodeId"), _text(m, "methodNodeId"),
                          _text(inputs[0], "name"), _text(inputs[0], "type"), b, data, r.files[data], mapping_set))
@@ -139,6 +149,40 @@ def resolve(mappings: Path, root: str, device: str, method_node_id: str) -> Link
     if len(hits) > 1:
         raise LinkRefused("link-ambiguous", "device+methodNodeId")
     return hits[0]
+
+
+def _ref(doc) -> str | None:
+    """``id@version`` of a contract document reference, or None when it is not exactly ``{id, version}``."""
+    if not (isinstance(doc, dict) and set(doc) == {"id", "version"} and ID.fullmatch(_text(doc, "id"))
+            and VERSION.fullmatch(_text(doc, "version"))):
+        return None
+    return f"{doc['id']}@{doc['version']}"
+
+
+def _endpoint(r: _Release, link: dict, evidence: dict) -> None:
+    """The link names its server as contract 2.26.0 shapes it, and each certificate it lists is in the release."""
+    if link.get("schemaVersion") != CONTRACT:
+        raise LinkRefused("link-mismatch", "schemaVersion")
+    e = link.get("endpointRef")
+    certs = e.get("certificates") if isinstance(e, dict) else None
+    uri = e.get("applicationUri") if isinstance(e, dict) else None
+    if not (isinstance(e, dict) and set(e) == {"applicationUri", "certificates"} and isinstance(uri, str)
+            and 0 < len(uri) <= 2048 and isinstance(certs, list) and 0 < len(certs) <= 8):
+        raise LinkRefused("link-mismatch", "endpointRef")
+    seen = set()
+    for c in certs:
+        if not (isinstance(c, dict) and set(c) == {"thumbprintSha1", "certificateRef"}
+                and SHA1.fullmatch(_text(c, "thumbprintSha1")) and _ref(c["certificateRef"])):
+            raise LinkRefused("link-mismatch", "endpointRef")
+        if c["thumbprintSha1"] in seen:
+            raise LinkRefused("link-mismatch", "endpointRef")
+        seen.add(c["thumbprintSha1"])
+        ev = evidence.get(_ref(c["certificateRef"]))
+        data = "payload/" + _text(ev, "file", "path")
+        if (ev is None or not _text(ev, "id").startswith(CERTIFICATE[0])
+                or _text(ev, "file", "mediaType") != CERTIFICATE[1]
+                or data not in r.files or _text(ev, "file", "sha256") != r.files[data]):
+            raise LinkRefused("link-mismatch", "endpointRef.certificateRef")
 
 
 def match(root: str, link: Link, answer: dict, *, group: str, edge: str, device: str, object_node_id: str,
