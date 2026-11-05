@@ -109,13 +109,16 @@ vor-propose <answer.json> --registry <dir> --by <principal> --by-key <file> --ap
 
 In v2, `--group`/`--edge` (`target.group`, `target.edge`) name the command node, where the command is delivered. `--device` (`target.device`) names the governed equipment by the Sparkplug device id its data edge publishes: the ISA-95 path, for example `synthetic-site:line1:mixer1`. The OPC UA object path (`Line1/Mixer1`) appears only in `--object`.
 
-Before signing, `vor-propose` resolves the published command binding (mapping contract 2.25.0) from the pinned release with its own code; no code is shared with Bifrost. The key is (the read binding's `device`, `methodNodeId`) against (`--device`, `--method`). Every file read is checked against the SHA-256 that `release.json` records for it. It then checks that the proposal and its evidence say what the link says:
+Before signing, `vor-propose` resolves the published command binding (mapping contract 2.26.0) from the pinned release with its own code; no code is shared with Bifrost. The key is (the read binding's `device`, `methodNodeId`) against (`--device`, `--method`). Every file read is checked against the SHA-256 that `release.json` records for it. It then checks that the proposal and its evidence say what the link says:
 - `--device` equals the read binding's device;
 - the evidence's `binding.source` names the released read-binding file and its digest;
 - the evidence binding's group, edge, device, metric and `governedDefinitionRef` equal the read binding's;
 - `pin.field_id` equals its `mappingId` and `pin.file` the mapping set it names;
 - `--group`/`--edge` equal the link's `command`;
-- `--object`, `--method` and `--input` equal the link's Method (one input, type `Double`).
+- `--object`, `--method` and `--input` equal the link's Method (one input, type `Double`);
+- the link is contract 2.26.0 (`schemaVersion`) and names the OPC UA server it may reach in `endpointRef`: an `applicationUri` and one to eight `certificates`, each a lowercase SHA-1 `thumbprintSha1` (listed once) and a `certificateRef` naming a `server-certificate-` evidence artifact of the release with media type `application/pkix-cert` whose DER file the release pins. A link without `endpointRef` (every 2.25.0 link) is refused.
+
+Vor checks only that `endpointRef` is present and well formed and that its certificates are in the release; it does not parse the certificate and makes no claim about the live server. Bifrost's `gates command approve` parses the DER (subjectAltName URI equals `applicationUri`, SHA-1 equals `thumbprintSha1`), and Heimdall compares the session's server certificate with the listed DER bytes. A refusal here is `link-mismatch` with detail `schemaVersion`, `endpointRef` or `endpointRef.certificateRef`.
 
 The value stays the command policy's to bound. Bifrost's approval and Heimdall run the same three checks in their own code as `command.link.missing|ambiguous|mismatch`.
 
@@ -159,7 +162,7 @@ python scripts/make_fixtures.py [--bifrost ../bifrost]
 
 This requires <bifrost>/gates/target/bifrost-gates.jar. It writes tests/fixtures/registries/{active,deprecated,retired} and tests/fixtures/trusted-keys.jsonl; private keys are created in a temporary directory and deleted. tests/fixtures is marked -text in .gitattributes so line endings never change hash-pinned bytes.
 
-The fixture registries are regenerated from Bifrost's `vor-read` bundle, which now carries a second mixer (`mixer2`) and two command bindings (`mixer1-set-temperature`, `mixer2-set-temperature`), mapping contract 2.25.0.
+The fixture registries are regenerated from Bifrost's `vor-read` bundle, which now carries two mixers (`mixer1`, `mixer2`), two command bindings (`mixer1-set-temperature`, `mixer2-set-temperature`) at mapping contract 2.26.0, and the simulator's server certificate `server-certificate-sim`, which both bindings name.
 
 ## Gates
 
@@ -214,6 +217,8 @@ python scripts/propose_crosscheck.py --negative-control
 - finally, the sim never transferred 150.0 or 48.0, and transferred nothing to Mixer2.
 
 The gate's own OPC UA client write to the sim's status node is retried up to three times on a fresh session, and every retry is printed; the write failed in 2 of 7 early runs.
+
+The Bifrost OPC UA sim mints a new server certificate at every start and writes it to the edge's server trust list. Because the `vor-read` fixture bundle's command links name `server-certificate-sim`, a certificate minted for the unit tests, and Heimdall refuses `command.link.endpoint` when the session's server certificate is not one the link lists, the gate starts the sim first, copies the fixture bundle, puts the sim's live certificate bytes in place of `server-certificate-sim` and its SHA-1 in each link's `endpointRef`, keeps the fixture's `applicationUri`, re-pins the digests, and publishes that copy. This is the gate's own code; it does not run Bifrost's scripts.
 
 Requirements: Docker, Java 17+, `<bifrost>/{gates,sim,heimdall}/target/*.jar`, `<muninn>/target/muninn.jar`, the `gate` extra.
 

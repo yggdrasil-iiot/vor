@@ -196,7 +196,7 @@ def test_cli_refuses_a_key_that_is_not_ed25519_pkcs8(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["error"] == "key"
 
 
-# --- the published command link (contract 2.25.0, proposal v2) -----------------------------------------------------
+# --- the published command link (contract 2.26.0, proposal v2) -----------------------------------------------------
 
 def test_the_predicate_is_v2_and_target_device_is_the_equipment_device_id(tmp_path):
     _, envelope = propose(evidence(tmp_path), REGISTRY, **args())
@@ -309,5 +309,74 @@ def test_refuses_a_link_whose_read_binding_is_not_in_the_release(tmp_path):
 def test_a_republished_release_still_signs_the_honest_call(tmp_path):
     """Control for the two tests above: the republishing alone does not make the honest proposal fail."""
     reg, ev = _republished(tmp_path, lambda root: None)
+    _, envelope = propose(ev, reg, **args())
+    assert decode(envelope)[2]["predicate"]["target"]["device"] == DEVICE
+
+
+# --- the server the link names (endpointRef, contract 2.26.0) -----------------------------------------------------
+
+MIXER1_LINK = "command-bindings/mixer1-set-temperature.json"
+CERT = {"thumbprintSha1": "f1b10d79fbe4ee83c978761ebc506bec9a123c5c",
+        "certificateRef": {"id": "server-certificate-sim", "version": "1.0.0"}}
+
+
+def _endpoint(change):
+    """Mixer1's link changed by ``change`` and republished."""
+    return lambda root: edit_json(root / "payload" / MIXER1_LINK, change)
+
+
+def _certs(*certs):
+    return lambda d: d["endpointRef"].__setitem__("certificates", list(certs))
+
+
+@pytest.mark.parametrize("change, detail", [
+    (lambda d: d.pop("endpointRef"), "endpointRef"),
+    (lambda d: d.__setitem__("schemaVersion", "2.25.0"), "schemaVersion"),
+    (lambda d: d["endpointRef"].__setitem__("applicationUri", ""), "endpointRef"),
+    (lambda d: d["endpointRef"].__setitem__("endpointUrl", "opc.tcp://sim:4840"), "endpointRef"),
+    (_certs(), "endpointRef"),
+    (_certs(dict(CERT, thumbprintSha1=CERT["thumbprintSha1"].upper())), "endpointRef"),
+    (_certs(dict(CERT, certificateRef={"id": "server-certificate-sim"})), "endpointRef"),
+    (_certs(CERT, CERT), "endpointRef"),
+    (_certs(dict(CERT, certificateRef={"id": "server-certificate-other", "version": "1.0.0"})),
+     "endpointRef.certificateRef"),
+    (_certs(dict(CERT, certificateRef={"id": "vor-binding-mixer1-temp", "version": "1.0.0"})),
+     "endpointRef.certificateRef"),
+])
+def test_refuses_a_link_that_does_not_name_its_server_as_2_26_0_shapes_it(tmp_path, change, detail):
+    reg, ev = _republished(tmp_path, _endpoint(change))
+    with pytest.raises(ProposalRefused) as r:
+        propose(ev, reg, **args())
+    assert (r.value.code, r.value.detail) == ("link-mismatch", detail)
+
+
+def test_refuses_a_certificate_artifact_that_is_not_a_der_certificate(tmp_path):
+    def media(root):
+        edit_json(root / "payload" / "evidence" / "server-certificate-sim.json",
+                  lambda d: d["file"].__setitem__("mediaType", "application/octet-stream"))
+    reg, ev = _republished(tmp_path, media)
+    with pytest.raises(ProposalRefused) as r:
+        propose(ev, reg, **args())
+    assert (r.value.code, r.value.detail) == ("link-mismatch", "endpointRef.certificateRef")
+
+
+def test_two_certificates_during_a_rotation_still_sign(tmp_path):
+    """Control for the refusals above: a second listed certificate with its own artifact is accepted."""
+    def rotate(root):
+        payload = root / "payload"
+        (payload / "data" / "server-certificate-next.der").write_bytes(
+            (payload / "data" / "server-certificate-sim.der").read_bytes() + b"next")
+        doc = json.loads((payload / "evidence" / "server-certificate-sim.json").read_bytes())
+        doc.update(id="server-certificate-next", file=dict(doc["file"], path="data/server-certificate-next.der"))
+        rel = "evidence/server-certificate-next.json"
+        (payload / rel).write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
+        edit_json(payload / "proposal.json", lambda p: p["files"].extend([
+            {"path": rel, "kind": "evidence-artifact", "id": doc["id"], "version": doc["version"], "sha256": ""}]))
+        edit_json(root / "release.json", lambda r: r["files"].extend([
+            {"path": "payload/" + rel, "sha256": ""},
+            {"path": "payload/data/server-certificate-next.der", "sha256": ""}]))
+        _endpoint(_certs(CERT, dict(CERT, thumbprintSha1="0" * 40,
+                                    certificateRef={"id": doc["id"], "version": "1.0.0"})))(root)
+    reg, ev = _republished(tmp_path, rotate)
     _, envelope = propose(ev, reg, **args())
     assert decode(envelope)[2]["predicate"]["target"]["device"] == DEVICE

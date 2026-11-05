@@ -331,6 +331,40 @@ class Agent:
             raise GateFailure(f"gates command publish failed: {r.stdout}{r.stderr}")
 
 
+def pin_live_certificate(source: Path, der: bytes, work: Path) -> Path:
+    """A copy of the vor-read bundle whose command links name the certificate the live sim presents.
+
+    The fixture's ``server-certificate-sim`` was minted for the unit tests; the sim mints a new one at every start,
+    and Heimdall refuses ``command.link.endpoint`` for a session certificate the link does not list. The copy keeps
+    the fixture's ``applicationUri`` (the sim's certificate carries the same URI), takes the live DER bytes and its
+    SHA-1, and re-pins every digest the proposal and submission record."""
+    bundle = work / "vor-read-pinned"
+    shutil.copytree(source, bundle)
+    load = lambda rel: json.loads((bundle / rel).read_bytes())
+    dump = lambda rel, d: (bundle / rel).write_bytes((json.dumps(d, indent=2) + "\n").encode("utf-8"))
+    digest = lambda rel: sha((bundle / rel).read_bytes())
+    proposal = load("proposal.json")
+    for e in proposal["files"]:
+        if e["kind"] == "evidence-artifact" and e["id"] == "server-certificate-sim":
+            ev = load(e["path"])
+            (bundle / ev["file"]["path"]).write_bytes(der)
+            ev["file"]["sha256"] = sha(der)
+            dump(e["path"], ev)
+        elif e["kind"] == "command-binding":
+            link = load(e["path"])
+            for c in link["endpointRef"]["certificates"]:
+                if c["certificateRef"]["id"] == "server-certificate-sim":
+                    c["thumbprintSha1"] = hashlib.sha1(der).hexdigest()
+            dump(e["path"], link)
+    for e in proposal["files"]:
+        e["sha256"] = digest(e["path"])
+    dump("proposal.json", proposal)
+    submission = load("submission.json")
+    submission["proposalSha256"] = submission["workspaceSha256"] = digest("proposal.json")
+    dump("submission.json", submission)
+    return bundle
+
+
 def rebase_and_publish(pub: Publisher, registry: Path, work: Path) -> None:
     """vor-read 1.0.1 on stream line1, based on the current head: the head moves after approval."""
     bundle = work / "vor-read-1.0.1"
@@ -550,14 +584,16 @@ def main() -> int:
         stack = Stack(bifrost, a.muninn.resolve(), work)
         print(f"[GATE] work dir {work}", flush=True)
         gates = Gates(stack.gates_jar)
-        pub = Publisher(gates, stack.source, work)
-        registry = pub.registry(work / "registry")
-        agent = Agent(gates, work, registry)
+        registry = work / "registry"
         edge = Edge(stack, bifrost, work, registry, 150.0 if a.negative_control == "policy" else 100.0)
         thumb = edge.thumbprint()
         stack.broker()
         watcher = Watcher()
         sim_log = sim_with_identity(stack, thumb, edge.server_trust)
+        live = (edge.server_trust / "trusted" / "certs" / "sim-server.der").read_bytes()
+        pub = Publisher(gates, pin_live_certificate(stack.source, live, work), work)
+        pub.registry(registry)
+        agent = Agent(gates, work, registry)
         recipes = stack.recipe_registry()
         (work / "trusted-keys.jsonl").write_text(pub.authorized)
         cfg = work / "vor.json"

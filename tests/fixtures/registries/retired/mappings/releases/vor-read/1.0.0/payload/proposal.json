@@ -1,6 +1,6 @@
 {
   "kind": "mapping-proposal",
-  "schemaVersion": "2.25.0",
+  "schemaVersion": "2.26.0",
   "id": "local-workspace",
   "version": "1.0.0",
   "baseRelease": null,
@@ -46,6 +46,13 @@
       "id": "vor-binding-mixer2-temp",
       "version": "1.0.0",
       "sha256": "573bdd4ec3aeb0c628f6a1a55a9b472bf4a6421245735fbbe35426ce08a5d0f4"
+    },
+    {
+      "path": "evidence/server-certificate-sim.json",
+      "kind": "evidence-artifact",
+      "id": "server-certificate-sim",
+      "version": "1.0.0",
+      "sha256": "a52787f92f92cd2443b3fd19f9e48cdba1d93aad1091772ca849b81bb2d6b3fc"
     },
     {
       "path": "mappings/0.json",
@@ -101,14 +108,14 @@
       "kind": "command-binding",
       "id": "mixer1-set-temperature",
       "version": "1.0.0",
-      "sha256": "29cdc3fb43d854ac952d20b9ea1adfd83886782d3f68db681b4d5a768ad0eeb2"
+      "sha256": "56d0b7e3ca0be1bf1aba6957fca0c901f86ae7e1f88bb42a1b0787d675a82354"
     },
     {
       "path": "command-bindings/mixer2-set-temperature.json",
       "kind": "command-binding",
       "id": "mixer2-set-temperature",
       "version": "1.0.0",
-      "sha256": "56675ab6beecac8ea29acedea6ef97389652f7c184323748ebd50e3a882251e6"
+      "sha256": "ec96dab60bb2ab530ec1e17601dd3920615c35470b13559742a04518cea7d0d2"
     }
   ]
 }

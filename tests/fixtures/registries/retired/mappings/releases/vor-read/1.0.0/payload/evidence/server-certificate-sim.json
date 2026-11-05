@@ -1,0 +1,17 @@
+{
+  "kind": "evidence-artifact",
+  "schemaVersion": "1.1.0",
+  "id": "server-certificate-sim",
+  "version": "1.0.0",
+  "origin": "synthetic",
+  "file": {
+    "path": "data/server-certificate-sim.der",
+    "sha256": "5bad0585b4344dac5715d019731ede4de6f108fb9dbe7986c33aa879eae3b6f3",
+    "mediaType": "application/pkix-cert"
+  },
+  "capturedAt": "2026-11-05T00:00:00Z",
+  "product": null,
+  "scope": [
+    "line1"
+  ]
+}
