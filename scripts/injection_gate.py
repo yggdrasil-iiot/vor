@@ -160,7 +160,7 @@ class Edge:
     def thumbprint(self) -> str:
         # The URI Heimdall derives for its own node when HEIMDALL_APPLICATION_URI is unset; it refuses to start
         # (identity.uri.mismatch) on a certificate minted for any other URI.
-        r = run("java", "-cp", str(self.heimdall_jar), "dev.krillin.bifrost.heimdall.EdgeIdentity", "--print-thumbprint",
+        r = run("java", "-cp", str(self.heimdall_jar), "yggdrasil.bifrost.heimdall.EdgeIdentity", "--print-thumbprint",
                 str(self.identity), f"urn:bifrost:heimdall:{fold(GROUP)}:{fold(CMD_EDGE)}")
         thumb = r.stdout.strip().splitlines()[-1].strip() if r.stdout.strip() else ""
         if r.returncode != 0 or not thumb:
