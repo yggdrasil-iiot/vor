@@ -19,7 +19,7 @@ The M1 design enforces one core rule: a value without quality, source time, rele
 
 The system adheres to an invariant of zero shared code. Vor reads the raw bytes published by Bifrost and the wire stream emitted by Muninn. It imports no code, libraries, or internal modules from either system. Vor is implemented in Python; Bifrost and Muninn are implemented in Java.
 
-Vor embeds no LLM. The MCP host performs all reasoning tasks. Vor supplies only deterministic evidence and explicit refusals. The server pattern employs FastMCP over standard input/output (`stdio`), uses injectable clients, and exposes read-only tools. This follows the architecture of an existing advisory MCP server (`agent/server.py` in `LivingLikeKrillin/resequence-twin-lab`) as an independent implementation.
+Vor embeds no LLM. The MCP host performs all reasoning tasks. Vor supplies only deterministic evidence and explicit refusals. The server pattern employs FastMCP over standard input/output (`stdio`), uses injectable clients, and exposes read-only tools. This follows the architecture of an existing advisory MCP server (`agent/server.py` in `yggdrasil-iiot/resequence-twin-lab`) as an independent implementation.
 
 ## Scope and non-goals
 
