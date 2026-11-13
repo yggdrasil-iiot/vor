@@ -1,0 +1,14 @@
+name: publication
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publication:
+    uses: yggdrasil-iiot/.github/.github/workflows/publication-check.yml@928b582441e7a0056a51d0d6ae5d85ed919e76c4
